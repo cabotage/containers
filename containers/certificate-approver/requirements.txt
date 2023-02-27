@@ -1,0 +1,3 @@
+cryptography==39.0.1
+kubernetes==25.3.0
+click==7.0
