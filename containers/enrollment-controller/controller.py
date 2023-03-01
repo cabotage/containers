@@ -201,7 +201,7 @@ def delete_consul_policy(consul_api, namespace, name):
 @click.option(
     "--vault-cacert",
     envvar="VAULT_CACERT",
-    default=True,
+    default="/var/run/secrets/cabotage.io/ca.crt",
     help="Path to a PEM-encoded CA cert file to use to verify the Vault server SSL certificate.",
 )
 @click.option(
@@ -253,12 +253,12 @@ def main(
     )
 
     if vault_token is None:
-        with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r") as f:
+        with open("/var/run/secrets/cabotage.io/token", "r") as f:
             jwt = f.read()
         token = requests.post(
             f"{vault_addr}/v1/auth/kubernetes/login",
             data=json.dumps({"jwt": jwt, "role": "vault-vault-enrollment-controller"}),
-            verify="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+            verify=vault_ca_cert,
         )
         vault_token = token.json()["auth"]["client_token"]
 
