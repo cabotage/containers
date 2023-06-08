@@ -233,10 +233,10 @@ def read_cert(cert_dir):
         pem_data = cert_file.read()
     cert = x509.load_pem_x509_certificate(pem_data, default_backend())
     common_name = [
-        na.value for na in cert.subject if na.oid._dotted_string == "2.5.4.3"
+        na.value for na in cert.subject if na.oid.dotted_string == "2.5.4.3"
     ][0]
     subject_alternative_names = [
-        ext.value for ext in cert.extensions if ext.oid._dotted_string == "2.5.29.17"
+        ext.value for ext in cert.extensions if ext.oid.dotted_string == "2.5.29.17"
     ][0]
     dns_names = subject_alternative_names.get_values_for_type(x509.DNSName)
     ip_sans = [
