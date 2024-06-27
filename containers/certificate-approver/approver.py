@@ -36,7 +36,8 @@ signal.signal(signal.SIGTERM, signal_handler)
 )
 @click.option("--subresource", default="serverautoapprove", help="Subresource to check")
 @click.option("--verb", default="create", help="Verb to check")
-def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb):
+@click.option("--act-as-signer", is_flag=True, help="Act as signer, requires --ca-secret")
+def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb, act_as_signer):
     try:
         click.echo("Loading incluster configuration...")
         kubernetes.config.load_incluster_config()
@@ -56,8 +57,6 @@ def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb)
     authorization_api = kubernetes.client.AuthorizationV1Api(
         kubernetes.client.ApiClient()
     )
-
-    ca_data = v1.read_namespaced_secret(ca_secret, ca_secret_namespace).data
 
     w = kubernetes.watch.Watch()
     latest_resource_version = 0
@@ -127,47 +126,6 @@ def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb)
                 click.echo(f"skipping unauthorized {item.metadata.name}")
                 continue
 
-            # sign the certificate
-            csr = x509.load_pem_x509_csr(base64.b64decode(item.spec.request))
-
-            ca = x509.load_pem_x509_certificate(base64.b64decode(ca_data["tls.crt"]))
-            ca_key = serialization.load_pem_private_key(
-                base64.b64decode(ca_data["tls.key"]), None
-            )
-
-            cert = (
-                x509.CertificateBuilder()
-                .subject_name(csr.subject)
-                .issuer_name(ca.subject)
-                .public_key(csr.public_key())
-                .serial_number(x509.random_serial_number())
-                .not_valid_before(datetime.datetime.utcnow())
-                .not_valid_after(
-                    datetime.datetime.utcnow() + datetime.timedelta(days=366)
-                )
-                .add_extension(
-                    x509.BasicConstraints(ca=False, path_length=None), critical=True
-                )
-                .add_extension(
-                    x509.SubjectKeyIdentifier.from_public_key(csr.public_key()),
-                    critical=False,
-                )
-                .add_extension(
-                    x509.AuthorityKeyIdentifier.from_issuer_public_key(ca.public_key()),
-                    critical=False,
-                )
-            )
-            for extension in csr.extensions:
-                if isinstance(extension.value, x509.SubjectAlternativeName):
-                    cert = cert.add_extension(
-                        extension.value, critical=extension.critical
-                    )
-
-            signed_cert = cert.sign(ca_key, hashes.SHA256())
-            chained_cert = signed_cert.public_bytes(
-                serialization.Encoding.PEM
-            ) + ca.public_bytes(serialization.Encoding.PEM)
-
             condition = kubernetes.client.models.V1CertificateSigningRequestCondition(
                 type="Approved",
                 status="True",
@@ -175,25 +133,77 @@ def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb)
                 message="Auto Approved by certificate-approver",
             )
 
-            status = kubernetes.client.models.V1CertificateSigningRequestStatus(
-                certificate=base64.b64encode(chained_cert).decode(),
-                conditions=[condition],
-            )
+            if act_as_signer:
+                # sign the certificate
+                ca_data = v1.read_namespaced_secret(ca_secret, ca_secret_namespace).data
 
-            item.status = status
+                csr = x509.load_pem_x509_csr(base64.b64decode(item.spec.request))
+
+                ca = x509.load_pem_x509_certificate(base64.b64decode(ca_data["tls.crt"]))
+                ca_key = serialization.load_pem_private_key(
+                    base64.b64decode(ca_data["tls.key"]), None
+                )
+
+                cert = (
+                    x509.CertificateBuilder()
+                    .subject_name(csr.subject)
+                    .issuer_name(ca.subject)
+                    .public_key(csr.public_key())
+                    .serial_number(x509.random_serial_number())
+                    .not_valid_before(datetime.datetime.utcnow())
+                    .not_valid_after(
+                        datetime.datetime.utcnow() + datetime.timedelta(days=366)
+                    )
+                    .add_extension(
+                        x509.BasicConstraints(ca=False, path_length=None), critical=True
+                    )
+                    .add_extension(
+                        x509.SubjectKeyIdentifier.from_public_key(csr.public_key()),
+                        critical=False,
+                    )
+                    .add_extension(
+                        x509.AuthorityKeyIdentifier.from_issuer_public_key(ca.public_key()),
+                        critical=False,
+                    )
+                )
+                for extension in csr.extensions:
+                    if isinstance(extension.value, x509.SubjectAlternativeName):
+                        cert = cert.add_extension(
+                            extension.value, critical=extension.critical
+                        )
+
+                signed_cert = cert.sign(ca_key, hashes.SHA256())
+                chained_cert = signed_cert.public_bytes(
+                    serialization.Encoding.PEM
+                ) + ca.public_bytes(serialization.Encoding.PEM)
+
+                status = kubernetes.client.models.V1CertificateSigningRequestStatus(
+                    certificate=base64.b64encode(chained_cert).decode(),
+                    conditions=[condition],
+                )
+
+                item.status = status
+
+            else:
+                status = kubernetes.client.models.V1CertificateSigningRequestStatus(
+                    conditions=[condition],
+                )
+
+                item.status = status
 
             click.echo(f"approving {item.metadata.name}")
             try:
                 certificates_api.replace_certificate_signing_request_approval(
                     item.metadata.name, item
                 )
-                item = certificates_api.read_certificate_signing_request(
-                    item.metadata.name
-                )
-                item.status = status
-                certificates_api.replace_certificate_signing_request_status(
-                    item.metadata.name, item
-                )
+                if act_as_signer:
+                    item = certificates_api.read_certificate_signing_request(
+                        item.metadata.name
+                    )
+                    item.status = status
+                    certificates_api.replace_certificate_signing_request_status(
+                        item.metadata.name, item
+                    )
             except ApiException as e:
                 click.echo(
                     "Encountered exception approving CertificateSigningRequest %s: %s %s"

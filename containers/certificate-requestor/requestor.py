@@ -86,6 +86,11 @@ def headless_dns(hostname, subdomain, namespace, domain):
     help="namespace as defined by pod.metadata.namespace",
 )
 @click.option(
+    "--signer-name",
+    default="kubernetes.io/cabotage-internal",
+    help="signerName for CertificateSigningRequest",
+)
+@click.option(
     "--cluster-domain", default="cluster.local", help="kubernetes cluster domain"
 )
 @click.option("--pod-name", required=True, help="name as defined by pod.metadata.name")
@@ -111,6 +116,7 @@ def main(
     hostname,
     subdomain,
     namespace,
+    signer_name,
     cluster_domain,
     pod_name,
     pod_ip,
@@ -165,7 +171,7 @@ def main(
 
     certificate_signing_request_spec = (
         kubernetes.client.models.V1CertificateSigningRequestSpec(
-            signer_name="kubernetes.io/cabotage-internal",
+            signer_name=signer_name,
             groups=["system:authenticated"],
             request=base64.b64encode(csr_pem).decode("utf-8").rstrip(),
             usages=[
