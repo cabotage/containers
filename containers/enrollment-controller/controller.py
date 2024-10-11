@@ -171,6 +171,10 @@ def delete_consul_role(vault_api, namespace, name):
 def consul_policy_exists(consul_api, namespace, name):
     try:
         policy = consul_api.acl.policy.get(name=f"{namespace}-{name}")
+        if not isinstance(policy, dict):
+            # Return type of consul api changed in 1.18 anything but a dict
+            # is a "Not Found"
+            return False
     except consul.base.ACLPermissionDenied:
         return False
     return True
