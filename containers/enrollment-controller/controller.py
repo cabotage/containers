@@ -193,7 +193,9 @@ def create_consul_policy(consul_api, namespace, name):
 def delete_consul_policy(consul_api, namespace, name):
     policy = consul_api.acl.policy.read(f"name/{namespace}-{name}")
     headers = consul_api.acl.policy.agent.prepare_headers(None)
-    consul_api.acl.policy.agent.http.delete(CB.json(), f"/v1/acl/policy/{policy['ID']}", headers=headers)
+    consul_api.acl.policy.agent.http.delete(
+        CB.json(), f"/v1/acl/policy/{policy['ID']}", headers=headers
+    )
 
 
 @click.command()
