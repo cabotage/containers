@@ -1,4 +1,4 @@
-hvac==1.0.2
-kubernetes==25.3.0
-click==7.0
-python-consul2==0.1.5
+hvac==2.3.0
+kubernetes==31.0.0
+click==8.1.8
+py-consul==1.5.4
