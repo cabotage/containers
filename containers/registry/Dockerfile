@@ -1,4 +1,4 @@
-FROM registry:2.8.1
+FROM registry:2.8.3
 
 COPY custom-entrypoint.sh /custom-entrypoint.sh
 ENTRYPOINT ["/custom-entrypoint.sh"]
