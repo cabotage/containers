@@ -36,8 +36,18 @@ signal.signal(signal.SIGTERM, signal_handler)
 )
 @click.option("--subresource", default="serverautoapprove", help="Subresource to check")
 @click.option("--verb", default="create", help="Verb to check")
-@click.option("--act-as-signer", is_flag=True, help="Act as signer, requires --ca-secret")
-def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb, act_as_signer):
+@click.option(
+    "--act-as-signer", is_flag=True, help="Act as signer, requires --ca-secret"
+)
+def main(
+    ca_secret_namespace,
+    ca_secret,
+    api_group,
+    resource,
+    subresource,
+    verb,
+    act_as_signer,
+):
     try:
         click.echo("Loading incluster configuration...")
         kubernetes.config.load_incluster_config()
@@ -139,7 +149,9 @@ def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb,
 
                 csr = x509.load_pem_x509_csr(base64.b64decode(item.spec.request))
 
-                ca = x509.load_pem_x509_certificate(base64.b64decode(ca_data["tls.crt"]))
+                ca = x509.load_pem_x509_certificate(
+                    base64.b64decode(ca_data["tls.crt"])
+                )
                 ca_key = serialization.load_pem_private_key(
                     base64.b64decode(ca_data["tls.key"]), None
                 )
@@ -162,7 +174,9 @@ def main(ca_secret_namespace, ca_secret, api_group, resource, subresource, verb,
                         critical=False,
                     )
                     .add_extension(
-                        x509.AuthorityKeyIdentifier.from_issuer_public_key(ca.public_key()),
+                        x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                            ca.public_key()
+                        ),
                         critical=False,
                     )
                 )
