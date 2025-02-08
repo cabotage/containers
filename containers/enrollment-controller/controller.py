@@ -10,6 +10,8 @@ from kubernetes.client.rest import ApiException
 import click
 
 import consul
+from consul.callback import CB
+
 import hvac
 
 import requests
@@ -31,12 +33,15 @@ def log_event(verb, event):
 
 
 CONSUL_POLICY_TEMPLATE = """
-key_prefix "cabotage/{namespace}/{name}/" {{
-  policy = "list"
-}}
-
-key_prefix "cabotage/{namespace}/{name}/mutable" {{
-  policy = "write"
+{{
+    "key_prefix": {{
+        "cabotage/{namespace}/{name}/": {{
+            "policy": "list"
+        }},
+        "cabotage/{namespace}/{name}/mutable": {{
+            "policy": "write"
+        }}
+    }}
 }}
 """
 
@@ -170,24 +175,25 @@ def delete_consul_role(vault_api, namespace, name):
 
 def consul_policy_exists(consul_api, namespace, name):
     try:
-        policy = consul_api.acl.policy.get(name=f"{namespace}-{name}")
+        policy = consul_api.acl.policy.read(f"name/{namespace}-{name}")
         if not isinstance(policy, dict):
             # Return type of consul api changed in 1.18 anything but a dict
             # is a "Not Found"
             return False
-    except consul.base.ACLPermissionDenied:
+    except consul.exceptions.ACLPermissionDenied:
         return False
     return True
 
 
 def create_consul_policy(consul_api, namespace, name):
     policy = CONSUL_POLICY_TEMPLATE.format(namespace=namespace, name=name)
-    consul_api.acl.policy.create(f"{namespace}-{name}", rules=policy)
+    consul_api.acl.policy.create(name=f"{namespace}-{name}", rules=json.loads(policy))
 
 
 def delete_consul_policy(consul_api, namespace, name):
-    policy = consul_api.acl.policy.get(name=f"{namespace}-{name}")
-    consul_api.acl.policy.delete(policy["ID"])
+    policy = consul_api.acl.policy.read(f"name/{namespace}-{name}")
+    headers = consul_api.acl.policy.agent.prepare_headers(None)
+    consul_api.acl.policy.agent.http.delete(CB.json(), f"/v1/acl/policy/{policy['ID']}", headers=headers)
 
 
 @click.command()
@@ -222,7 +228,7 @@ def delete_consul_policy(consul_api, namespace, name):
 @click.option(
     "--consul-cacert",
     envvar="CONSUL_CACERT",
-    default=True,
+    default="",
     help="Path to a PEM-encoded CA cert file to use to verify the Consul server SSL certificate.",
 )
 @click.option(
