@@ -220,11 +220,11 @@ def certificate_needs_renewed(cert_dir):
     with open(os.path.join(cert_dir, "cert.pem"), "rb") as cert_file:
         pem_data = cert_file.read()
     cert = x509.load_pem_x509_certificate(pem_data, default_backend())
-    not_valid_before = cert.not_valid_before
-    not_valid_after = cert.not_valid_after
+    not_valid_before = cert.not_valid_before_utc
+    not_valid_after = cert.not_valid_after_utc
     return (
-        not_valid_after - datetime.datetime.utcnow()
-        < (cert.not_valid_after - cert.not_valid_before) / 2
+        not_valid_after - datetime.datetime.now(datetime.UTC)
+        < (cert.not_valid_after_utc - cert.not_valid_before_utc) / 2
     )
 
 
