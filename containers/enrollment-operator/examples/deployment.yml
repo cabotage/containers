@@ -43,6 +43,7 @@ spec:
           image: cabotage/enrollment-operator:4
           imagePullPolicy: Always
           args:
+            - "--verbose"
             - "--liveness"
             - "http://0.0.0.0:8080/healthz"
           livenessProbe:
