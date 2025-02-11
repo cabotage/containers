@@ -1,0 +1,5 @@
+apiVersion: cabotage.io/v1
+kind: CabotageEnrollment
+metadata:
+  namespace: cabotage
+  name: test-enrollment
