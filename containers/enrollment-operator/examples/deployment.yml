@@ -42,6 +42,13 @@ spec:
         - name: enrollment-operator
           image: cabotage/enrollment-operator:4
           imagePullPolicy: Always
+          args:
+            - "--liveness"
+            - "http://0.0.0.0:8080/healthz"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
           volumeMounts:
             - name: vault-token
               mountPath: /var/run/secrets/vault
