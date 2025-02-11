@@ -7,4 +7,4 @@ RUN pip --no-cache-dir --disable-pip-version-check install -r /opt/cabotage/requ
 USER nobody
 
 COPY operator.py /opt/cabotage/operator.py
-ENTRYPOINT ["kopf", "run", "/opt/cabotage/operator.py", "--verbose", "--all-namespaces"]
+ENTRYPOINT ["kopf", "run", "/opt/cabotage/operator.py", "--all-namespaces"]
