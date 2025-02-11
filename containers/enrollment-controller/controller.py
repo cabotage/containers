@@ -1,11 +1,10 @@
-import base64
 import signal
 import sys
 import json
 from urllib.parse import urlparse
+import re
 
 import kubernetes
-from kubernetes.client.rest import ApiException
 
 import click
 
@@ -24,6 +23,8 @@ def signal_handler(signal, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
+
+WATCH_TOO_OLD_RE = re.compile(r"Expired: too old resource version: (\d+) \((\d+)\)")
 
 
 def log_event(verb, event):
@@ -88,7 +89,7 @@ def delete_policy(vault_api, namespace, name):
 def role_exists(vault_api, namespace, name):
     try:
         role = vault_api.read(f"auth/kubernetes/role/{namespace}-{name}")
-        return role != None
+        return role is not None
     except hvac.exceptions.InvalidPath:
         return False
     return True
@@ -120,7 +121,7 @@ def delete_role(vault_api, namespace, name):
 def pki_role_exists(vault_api, namespace, name):
     try:
         role = vault_api.read(f"cabotage-ca/roles/{namespace}-{name}")
-        return role != None
+        return role is not None
     except hvac.exceptions.InvalidPath:
         return False
     return True
@@ -260,9 +261,6 @@ def main(
             raise click.Abort()
 
     core_api = kubernetes.client.CoreV1Api(kubernetes.client.ApiClient())
-    authorization_api = kubernetes.client.AuthorizationV1Api(
-        kubernetes.client.ApiClient()
-    )
 
     if vault_token is None:
         with open("/var/run/secrets/cabotage.io/token", "r") as f:
@@ -270,7 +268,7 @@ def main(
         token = requests.post(
             f"{vault_addr}/v1/auth/kubernetes/login",
             data=json.dumps({"jwt": jwt, "role": "vault-vault-enrollment-controller"}),
-            verify=vault_ca_cert,
+            verify=vault_cacert,
         )
         vault_token = token.json()["auth"]["client_token"]
 
@@ -287,7 +285,7 @@ def main(
     if consul_token is None:
         try:
             response = vault_api.read(
-                f"cabotage-consul/roles/cabotage-enrollment-controller"
+                "cabotage-consul/roles/cabotage-enrollment-controller"
             )
             consul_token = response["token"]
         except hvac.exceptions.InvalidPath:
@@ -318,13 +316,20 @@ def main(
         try:
             for event in w.stream(
                 core_api.list_service_account_for_all_namespaces,
-                label_selector=f"{serviceaccount_label}=true",
                 resource_version=latest_resource_version,
                 timeout_seconds=10,
             ):
                 if event["type"] == "DELETED":
                     item = event["object"]
-                    if event["object"].metadata.uid in deleted:
+                    if (
+                        event["object"].metadata.uid in deleted
+                        or not item.metadata.labels
+                        or not item.metadata.labels.get(serviceaccount_label) == "true"
+                    ):
+                        log_event("Skipping Delete", event)
+                        latest_resource_version = max(
+                            latest_resource_version, int(item.metadata.resource_version)
+                        )
                         continue
 
                     log_event("Handling Delete", event)
@@ -408,8 +413,8 @@ def main(
                 if event["type"] == "ADDED":
                     item = event["object"]
                     if (
-                        item.metadata.labels
-                        and serviceaccount_label not in item.metadata.labels
+                        not item.metadata.labels
+                        or not item.metadata.labels.get(serviceaccount_label) == "true"
                     ):
                         log_event("Skipping Create", event)
                         continue
@@ -489,16 +494,23 @@ def main(
                             f"Creating Vault PKI role {item.metadata.namespace}-{item.metadata.name}"
                         )
                         create_pki_role(
-                            vault_api, item.metadata.namespace, item.metadata.name
+                           vault_api, item.metadata.namespace, item.metadata.name
                         )
 
                 latest_resource_version = max(
                     latest_resource_version, int(item.metadata.resource_version)
                 )
 
-        except kubernetes.client.exceptions.ApiException:
+        except kubernetes.client.exceptions.ApiException as e:
+            if e.status == 410:
+                match = WATCH_TOO_OLD_RE.search(e.reason)
+                if match:
+                    latest_resource_version = int(match.group(2))
+                else:
+                    latest_resource_version = 0
+            else:
+                latest_resource_version = 0
             w = kubernetes.watch.Watch()
-            latest_resource_version = 0
         except Exception as e:
             click.echo("Exception encountered: %s\n" % e)
             raise e
