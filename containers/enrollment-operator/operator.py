@@ -177,6 +177,7 @@ def delete_consul_policy(consul_api, namespace, name):
 def startup_fn(logger, memo, settings, **kwargs):
     settings.peering.priority = random.randint(0, 32767)
     settings.peering.name = "enrollment-controller-operator"
+    settings.peering.clusterwide = True
 
     with open("/var/run/secrets/vault/vault-token", "r") as f:
         vault_token = f.read()
