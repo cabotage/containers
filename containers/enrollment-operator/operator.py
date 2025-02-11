@@ -201,6 +201,18 @@ def startup_fn(logger, memo, settings, **kwargs):
     )
 
 
+@kopf.on.probe(id="consul")
+def check_consul_access(memo, **kwargs):
+    memo.consul_api.status.leader()
+    return True
+
+
+@kopf.on.probe(id="vault")
+def check_vault_access(memo, **kwargs):
+    memo.vault_api.sys.read_leader_status()
+    return True
+
+
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
 def create_fn(spec, name, namespace, memo, logger, **kwargs):
