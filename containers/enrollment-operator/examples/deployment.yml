@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: cabotage
+  name: enrollment-operator
+  labels:
+    app: enrollment-operator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: enrollment-operator
+  template:
+    metadata:
+      labels:
+        app: enrollment-operator
+        ca-admission.cabotage.io: "true"
+    spec:
+      serviceAccountName: cabotage-enrollment-operator-account
+      initContainers:
+        - name: cabotage-enroller
+          image: cabotage/sidecar:4
+          args:
+            - "kube-login"
+            - "--fetch-consul-token"
+            - "--vault-consul-role=cabotage-enrollment-controller"
+            - "--vault-ca-file=/var/run/secrets/cabotage.io/ca.crt"
+            - "--vault-auth-kubernetes-role=cabotage-enrollment-controller"
+          volumeMounts:
+            - name: vault-token
+              mountPath: /var/run/secrets/vault
+      containers:
+        - name: cabotage-sidecar
+          image: cabotage/sidecar:4
+          args:
+            - "maintain"
+          volumeMounts:
+            - name: vault-token
+              mountPath: /var/run/secrets/vault
+        - name: enrollment-operator
+          image: cabotage/enrollment-operator:4
+          imagePullPolicy: Always
+          args:
+            - "--verbose"
+            - "--liveness"
+            - "http://0.0.0.0:8080/healthz"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          volumeMounts:
+            - name: vault-token
+              mountPath: /var/run/secrets/vault
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "100m"
+            requests:
+              memory: "100Mi"
+              cpu: "50m"
+          securityContext:
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: vault-token
+          emptyDir:
+            medium: "Memory"
+            sizeLimit: "1M"
