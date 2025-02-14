@@ -215,37 +215,38 @@ def check_vault_access(memo, **kwargs):
 
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
-def create_fn(spec, name, namespace, memo, logger, **kwargs):
-    status = {
-        "vault-policy": False,
-        "vault-kubernetes-auth-role": False,
-        "consul-policy": False,
-        "vault-consul-role": False,
-        "vault-pki-role": False,
-    }
+def resource_vault_policy(spec, name, namespace, memo, logger, **kwargs):
     if policy_exists(memo.vault_api, namespace, name):
         logger.info(f"Vault policy {namespace}-{name} exists")
-        status["vault-policy"] = True
+        return True
     else:
         logger.info(f"Creating Vault policy {namespace}-{name}")
         create_policy(memo.vault_api, namespace, name)
-        status["vault-policy"] = True
+        return True
 
+
+@kopf.on.create("cabotageenrollments")
+@kopf.on.update("cabotageenrollments")
+def resource_vault_kubernetes_auth_role(spec, name, namespace, memo, logger, **kwargs):
     if role_exists(memo.vault_api, namespace, name):
         logger.info(f"Vault Kubernetes auth role {namespace}-{name} exists")
-        status["vault-kubernetes-auth-role"] = True
+        return True
     else:
         logger.info(f"Creating Vault Kubernetes auth role {namespace}-{name}")
         create_role(memo.vault_api, namespace, name)
-        status["vault-kubernetes-auth-role"] = True
+        return True
 
+
+@kopf.on.create("cabotageenrollments")
+@kopf.on.update("cabotageenrollments")
+def resource_consul_policy(spec, name, namespace, memo, logger, **kwargs):
     if consul_policy_exists(
         memo.consul_api,
         namespace,
         name,
     ):
         logger.info(f"Consul policy {namespace}-{name} exists")
-        status["consul-policy"] = True
+        return True
     else:
         logger.info(f"Creating Consul policy {namespace}-{name}")
         create_consul_policy(
@@ -253,25 +254,48 @@ def create_fn(spec, name, namespace, memo, logger, **kwargs):
             namespace,
             name,
         )
-        status["consul-policy"] = True
+        return True
 
+
+@kopf.on.create("cabotageenrollments")
+@kopf.on.update("cabotageenrollments")
+def resource_vault_consul_role(spec, name, namespace, memo, logger, **kwargs):
     if consul_role_exists(memo.vault_api, namespace, name):
         logger.info(f"Vault Consul role {namespace}-{name} exists")
-        status["vault-consul-role"] = True
+        return True
     else:
         logger.info(f"Creating Vault Consul role {namespace}-{name}")
         create_consul_role(memo.vault_api, namespace, name)
-        status["vault-consul-role"] = True
+        return True
 
+
+@kopf.on.create("cabotageenrollments")
+@kopf.on.update("cabotageenrollments")
+def resource_vault_pki_role(spec, name, namespace, memo, logger, **kwargs):
     if pki_role_exists(memo.vault_api, namespace, name):
         logger.info(f"Vault PKI role {namespace}-{name} exists")
-        status["vault-pki-role"] = True
+        return True
     else:
         logger.info(f"Creating Vault PKI role {namespace}-{name}")
         create_pki_role(memo.vault_api, namespace, name)
-        status["vault-pki-role"] = True
+        return True
 
-    return status
+
+@kopf.on.create("cabotageenrollments")
+@kopf.on.update("cabotageenrollments")
+def summary(status, **kwargs):
+    total = 0
+    ready = 0
+    for key, value in status.items():
+        if key.startswith("resource_"):
+            total += 1
+            if value:
+                ready += 1
+    _ready = False
+    if ready == total:
+        _ready = True
+
+    return {"ready": _ready, "resources": f"{ready}/{total}"}
 
 
 @kopf.on.delete("cabotageenrollments")

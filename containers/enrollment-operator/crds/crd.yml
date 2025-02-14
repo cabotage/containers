@@ -16,6 +16,17 @@ spec:
     - name: v1
       served: true
       storage: true
+      additionalPrinterColumns:
+        - name: Ready
+          type: string
+          description: All required consul/vault policies created
+          jsonPath: .status.summary.ready
+        - name: Resources
+          type: string
+          jsonPath: .status.summary.resources
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
       schema:
         openAPIV3Schema:
           type: object
