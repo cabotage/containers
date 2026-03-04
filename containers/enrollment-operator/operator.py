@@ -20,6 +20,12 @@ CONSUL_POLICY_TEMPLATE = """
 }}
 """
 
+CONSUL_POLICY_INHERITED_TEMPLATE = """
+        "cabotage/{namespace}/{name}/": {{
+            "policy": "list"
+        }}
+"""
+
 
 VAULT_POLICY_TEMPLATE = """
 path "cabotage-secrets/automation/{namespace}/{name}/*" {{
@@ -35,6 +41,12 @@ path "cabotage-ca/issue/{namespace}-{name}" {{
 }}
 """
 
+VAULT_POLICY_INHERITED_TEMPLATE = """
+path "cabotage-secrets/automation/{namespace}/{name}/*" {{
+  capabilities = ["read", "list"]
+}}
+"""
+
 
 def policy_exists(vault_api, namespace, name):
     try:
@@ -44,8 +56,12 @@ def policy_exists(vault_api, namespace, name):
     return True
 
 
-def create_policy(vault_api, namespace, name):
+def create_policy(vault_api, namespace, name, inherits_from=None):
     policy = VAULT_POLICY_TEMPLATE.format(namespace=namespace, name=name)
+    for source in inherits_from or []:
+        policy += VAULT_POLICY_INHERITED_TEMPLATE.format(
+            namespace=source["namespace"], name=source["name"]
+        )
     vault_api.sys.create_or_update_policy(name=f"{namespace}-{name}", policy=policy)
 
 
@@ -160,9 +176,16 @@ def consul_policy_exists(consul_api, namespace, name):
     return True
 
 
-def create_consul_policy(consul_api, namespace, name):
-    policy = CONSUL_POLICY_TEMPLATE.format(namespace=namespace, name=name)
-    consul_api.acl.policy.create(name=f"{namespace}-{name}", rules=json.loads(policy))
+def create_consul_policy(consul_api, namespace, name, inherits_from=None):
+    rules = json.loads(CONSUL_POLICY_TEMPLATE.format(namespace=namespace, name=name))
+    for source in inherits_from or []:
+        inherited = json.loads(
+            "{" + CONSUL_POLICY_INHERITED_TEMPLATE.format(
+                namespace=source["namespace"], name=source["name"]
+            ) + "}"
+        )
+        rules["key_prefix"].update(inherited)
+    consul_api.acl.policy.create(name=f"{namespace}-{name}", rules=rules)
 
 
 def delete_consul_policy(consul_api, namespace, name):
@@ -220,8 +243,9 @@ def resource_vault_policy(spec, name, namespace, memo, logger, **kwargs):
         logger.info(f"Vault policy {namespace}-{name} exists")
         return True
     else:
+        inherits_from = spec.get("inheritsFrom", [])
         logger.info(f"Creating Vault policy {namespace}-{name}")
-        create_policy(memo.vault_api, namespace, name)
+        create_policy(memo.vault_api, namespace, name, inherits_from=inherits_from)
         return True
 
 
@@ -248,11 +272,13 @@ def resource_consul_policy(spec, name, namespace, memo, logger, **kwargs):
         logger.info(f"Consul policy {namespace}-{name} exists")
         return True
     else:
+        inherits_from = spec.get("inheritsFrom", [])
         logger.info(f"Creating Consul policy {namespace}-{name}")
         create_consul_policy(
             memo.consul_api,
             namespace,
             name,
+            inherits_from=inherits_from,
         )
         return True
 

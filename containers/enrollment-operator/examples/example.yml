@@ -3,3 +3,13 @@ kind: CabotageEnrollment
 metadata:
   namespace: cabotage
   name: test-enrollment
+---
+apiVersion: cabotage.io/v1
+kind: CabotageEnrollment
+metadata:
+  namespace: cabotage
+  name: test-enrollment-preview
+spec:
+  inheritsFrom:
+    - namespace: cabotage
+      name: test-enrollment
