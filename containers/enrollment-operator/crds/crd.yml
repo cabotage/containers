@@ -34,6 +34,19 @@ spec:
             spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+              properties:
+                inheritsFrom:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - namespace
+                      - name
+                    properties:
+                      namespace:
+                        type: string
+                      name:
+                        type: string
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
