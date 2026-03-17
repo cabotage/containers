@@ -27,6 +27,8 @@ spec:
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
       schema:
         openAPIV3Schema:
           type: object
@@ -46,6 +48,27 @@ spec:
                       namespace:
                         type: string
                       name:
+                        type: string
+                readKeys:
+                  type: object
+                  description: >
+                    Additional Consul/Vault key prefixes to grant read-only
+                    access to. Used by cabotage-app to grant app pods access
+                    to specific environment-level configuration keys.
+                    Paths are provided verbatim and inserted directly into
+                    Consul/Vault policies.
+                  properties:
+                    consul:
+                      type: array
+                      description: >
+                        Consul key prefixes to grant read access to.
+                      items:
+                        type: string
+                    vault:
+                      type: array
+                      description: >
+                        Vault secret paths to grant read and list access to.
+                      items:
                         type: string
             status:
               type: object

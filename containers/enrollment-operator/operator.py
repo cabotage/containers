@@ -22,7 +22,7 @@ CONSUL_POLICY_TEMPLATE = """
 
 CONSUL_POLICY_INHERITED_TEMPLATE = """
         "cabotage/{namespace}/{name}/": {{
-            "policy": "list"
+            "policy": "read"
         }}
 """
 
@@ -56,12 +56,18 @@ def policy_exists(vault_api, namespace, name):
     return True
 
 
-def create_policy(vault_api, namespace, name, inherits_from=None):
+def create_policy(vault_api, namespace, name, inherits_from=None, read_keys=None):
     policy = VAULT_POLICY_TEMPLATE.format(namespace=namespace, name=name)
     for source in inherits_from or []:
         policy += VAULT_POLICY_INHERITED_TEMPLATE.format(
             namespace=source["namespace"], name=source["name"]
         )
+    for path in (read_keys or {}).get("vault", []):
+        policy += f"""
+path "{path}" {{
+  capabilities = ["read", "list"]
+}}
+"""
     vault_api.sys.create_or_update_policy(name=f"{namespace}-{name}", policy=policy)
 
 
@@ -176,16 +182,41 @@ def consul_policy_exists(consul_api, namespace, name):
     return True
 
 
-def create_consul_policy(consul_api, namespace, name, inherits_from=None):
+def _build_consul_rules(namespace, name, inherits_from=None, read_keys=None):
     rules = json.loads(CONSUL_POLICY_TEMPLATE.format(namespace=namespace, name=name))
     for source in inherits_from or []:
         inherited = json.loads(
-            "{" + CONSUL_POLICY_INHERITED_TEMPLATE.format(
+            "{"
+            + CONSUL_POLICY_INHERITED_TEMPLATE.format(
                 namespace=source["namespace"], name=source["name"]
-            ) + "}"
+            )
+            + "}"
         )
         rules["key_prefix"].update(inherited)
+    for key_prefix in (read_keys or {}).get("consul", []):
+        rules["key_prefix"][key_prefix] = {"policy": "read"}
+    return rules
+
+
+def create_consul_policy(
+    consul_api, namespace, name, inherits_from=None, read_keys=None
+):
+    rules = _build_consul_rules(namespace, name, inherits_from, read_keys)
     consul_api.acl.policy.create(name=f"{namespace}-{name}", rules=rules)
+
+
+def update_consul_policy(
+    consul_api, namespace, name, inherits_from=None, read_keys=None
+):
+    policy = consul_api.acl.policy.read(f"name/{namespace}-{name}")
+    rules = _build_consul_rules(namespace, name, inherits_from, read_keys)
+    headers = consul_api.acl.policy.agent.prepare_headers(None)
+    consul_api.acl.policy.agent.http.put(
+        CB.json(),
+        f"/v1/acl/policy/{policy['ID']}",
+        headers=headers,
+        data=json.dumps({"Name": f"{namespace}-{name}", "Rules": json.dumps(rules)}),
+    )
 
 
 def delete_consul_policy(consul_api, namespace, name):
@@ -238,15 +269,35 @@ def check_vault_access(memo, **kwargs):
 
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
-def resource_vault_policy(spec, name, namespace, memo, logger, **kwargs):
-    if policy_exists(memo.vault_api, namespace, name):
-        logger.info(f"Vault policy {namespace}-{name} exists")
-        return True
+def resource_vault_policy(spec, name, namespace, memo, logger, status, **kwargs):
+    inherits_from = spec.get("inheritsFrom", [])
+    read_keys = spec.get("readKeys", {})
+    last = status.get("resource_vault_policy", {})
+    if isinstance(last, dict):
+        last_read_keys = last.get("read_keys")
+        last_inherits_from = last.get("inherits_from")
     else:
-        inherits_from = spec.get("inheritsFrom", [])
-        logger.info(f"Creating Vault policy {namespace}-{name}")
-        create_policy(memo.vault_api, namespace, name, inherits_from=inherits_from)
-        return True
+        last_read_keys = None
+        last_inherits_from = None
+    policy_current = read_keys == (last_read_keys or {}) and inherits_from == (
+        last_inherits_from or []
+    )
+    if policy_exists(memo.vault_api, namespace, name) and policy_current:
+        logger.info(f"Vault policy {namespace}-{name} exists and is current")
+    else:
+        logger.info(f"Creating/updating Vault policy {namespace}-{name}")
+        create_policy(
+            memo.vault_api,
+            namespace,
+            name,
+            inherits_from=inherits_from,
+            read_keys=read_keys,
+        )
+    return {
+        "ready": True,
+        "read_keys": read_keys or None,
+        "inherits_from": inherits_from or None,
+    }
 
 
 @kopf.on.create("cabotageenrollments")
@@ -263,24 +314,45 @@ def resource_vault_kubernetes_auth_role(spec, name, namespace, memo, logger, **k
 
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
-def resource_consul_policy(spec, name, namespace, memo, logger, **kwargs):
-    if consul_policy_exists(
-        memo.consul_api,
-        namespace,
-        name,
-    ):
-        logger.info(f"Consul policy {namespace}-{name} exists")
-        return True
+def resource_consul_policy(spec, name, namespace, memo, logger, status, **kwargs):
+    inherits_from = spec.get("inheritsFrom", [])
+    read_keys = spec.get("readKeys", {})
+    last = status.get("resource_consul_policy", {})
+    if isinstance(last, dict):
+        last_read_keys = last.get("read_keys")
+        last_inherits_from = last.get("inherits_from")
     else:
-        inherits_from = spec.get("inheritsFrom", [])
+        last_read_keys = None
+        last_inherits_from = None
+    policy_current = read_keys == (last_read_keys or {}) and inherits_from == (
+        last_inherits_from or []
+    )
+    exists = consul_policy_exists(memo.consul_api, namespace, name)
+    if exists and policy_current:
+        logger.info(f"Consul policy {namespace}-{name} exists and is current")
+    elif exists:
+        logger.info(f"Updating Consul policy {namespace}-{name}")
+        update_consul_policy(
+            memo.consul_api,
+            namespace,
+            name,
+            inherits_from=inherits_from,
+            read_keys=read_keys,
+        )
+    else:
         logger.info(f"Creating Consul policy {namespace}-{name}")
         create_consul_policy(
             memo.consul_api,
             namespace,
             name,
             inherits_from=inherits_from,
+            read_keys=read_keys,
         )
-        return True
+    return {
+        "ready": True,
+        "read_keys": read_keys or None,
+        "inherits_from": inherits_from or None,
+    }
 
 
 @kopf.on.create("cabotageenrollments")
@@ -315,13 +387,10 @@ def summary(status, **kwargs):
     for key, value in status.items():
         if key.startswith("resource_"):
             total += 1
-            if value:
+            if value is True or (isinstance(value, dict) and value.get("ready")):
                 ready += 1
-    _ready = False
-    if ready == total:
-        _ready = True
 
-    return {"ready": _ready, "resources": f"{ready}/{total}"}
+    return {"ready": ready == total, "resources": f"{ready}/{total}"}
 
 
 @kopf.on.delete("cabotageenrollments")
