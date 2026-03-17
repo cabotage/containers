@@ -22,7 +22,7 @@ CONSUL_POLICY_TEMPLATE = """
 
 CONSUL_POLICY_INHERITED_TEMPLATE = """
         "cabotage/{namespace}/{name}/": {{
-            "policy": "read"
+            "policy": "list"
         }}
 """
 
@@ -56,13 +56,21 @@ def policy_exists(vault_api, namespace, name):
     return True
 
 
+def _normalize_read_keys(read_keys):
+    """Normalize read_keys dict to lowercase keys for consistent lookups."""
+    if not read_keys:
+        return {}
+    return {k.lower(): v for k, v in read_keys.items()}
+
+
 def create_policy(vault_api, namespace, name, inherits_from=None, read_keys=None):
     policy = VAULT_POLICY_TEMPLATE.format(namespace=namespace, name=name)
     for source in inherits_from or []:
         policy += VAULT_POLICY_INHERITED_TEMPLATE.format(
             namespace=source["namespace"], name=source["name"]
         )
-    for path in (read_keys or {}).get("vault", []):
+    normalized = _normalize_read_keys(read_keys)
+    for path in normalized.get("vault", []):
         policy += f"""
 path "{path}" {{
   capabilities = ["read", "list"]
@@ -193,8 +201,9 @@ def _build_consul_rules(namespace, name, inherits_from=None, read_keys=None):
             + "}"
         )
         rules["key_prefix"].update(inherited)
-    for key_prefix in (read_keys or {}).get("consul", []):
-        rules["key_prefix"][key_prefix] = {"policy": "read"}
+    normalized = _normalize_read_keys(read_keys)
+    for key_prefix in normalized.get("consul", []):
+        rules["key_prefix"][key_prefix] = {"policy": "list"}
     return rules
 
 
@@ -269,7 +278,9 @@ def check_vault_access(memo, **kwargs):
 
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
-def resource_vault_policy(spec, name, namespace, memo, logger, status, **kwargs):
+def resource_vault_policy(spec, name, namespace, memo, logger, status, retry, **kwargs):
+    if not spec and retry < 5:
+        raise kopf.TemporaryError("spec is not yet populated", delay=1)
     inherits_from = spec.get("inheritsFrom", [])
     read_keys = spec.get("readKeys", {})
     last = status.get("resource_vault_policy", {})
@@ -314,7 +325,9 @@ def resource_vault_kubernetes_auth_role(spec, name, namespace, memo, logger, **k
 
 @kopf.on.create("cabotageenrollments")
 @kopf.on.update("cabotageenrollments")
-def resource_consul_policy(spec, name, namespace, memo, logger, status, **kwargs):
+def resource_consul_policy(spec, name, namespace, memo, logger, status, retry, **kwargs):
+    if not spec and retry < 5:
+        raise kopf.TemporaryError("spec is not yet populated", delay=1)
     inherits_from = spec.get("inheritsFrom", [])
     read_keys = spec.get("readKeys", {})
     last = status.get("resource_consul_policy", {})
