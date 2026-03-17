@@ -22,7 +22,7 @@ CONSUL_POLICY_TEMPLATE = """
 
 CONSUL_POLICY_INHERITED_TEMPLATE = """
         "cabotage/{namespace}/{name}/": {{
-            "policy": "read"
+            "policy": "list"
         }}
 """
 
@@ -56,13 +56,21 @@ def policy_exists(vault_api, namespace, name):
     return True
 
 
+def _normalize_read_keys(read_keys):
+    """Normalize read_keys dict to lowercase keys for consistent lookups."""
+    if not read_keys:
+        return {}
+    return {k.lower(): v for k, v in read_keys.items()}
+
+
 def create_policy(vault_api, namespace, name, inherits_from=None, read_keys=None):
     policy = VAULT_POLICY_TEMPLATE.format(namespace=namespace, name=name)
     for source in inherits_from or []:
         policy += VAULT_POLICY_INHERITED_TEMPLATE.format(
             namespace=source["namespace"], name=source["name"]
         )
-    for path in (read_keys or {}).get("vault", []):
+    normalized = _normalize_read_keys(read_keys)
+    for path in normalized.get("vault", []):
         policy += f"""
 path "{path}" {{
   capabilities = ["read", "list"]
@@ -193,8 +201,9 @@ def _build_consul_rules(namespace, name, inherits_from=None, read_keys=None):
             + "}"
         )
         rules["key_prefix"].update(inherited)
-    for key_prefix in (read_keys or {}).get("consul", []):
-        rules["key_prefix"][key_prefix] = {"policy": "read"}
+    normalized = _normalize_read_keys(read_keys)
+    for key_prefix in normalized.get("consul", []):
+        rules["key_prefix"][key_prefix] = {"policy": "list"}
     return rules
 
 
