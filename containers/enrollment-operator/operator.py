@@ -22,7 +22,7 @@ CONSUL_POLICY_TEMPLATE = """
 
 CONSUL_POLICY_INHERITED_TEMPLATE = """
         "cabotage/{namespace}/{name}/": {{
-            "policy": "read"
+            "policy": "list"
         }}
 """
 
@@ -194,7 +194,7 @@ def _build_consul_rules(namespace, name, inherits_from=None, read_keys=None):
         )
         rules["key_prefix"].update(inherited)
     for key_prefix in (read_keys or {}).get("consul", []):
-        rules["key_prefix"][key_prefix] = {"policy": "read"}
+        rules["key_prefix"][key_prefix] = {"policy": "list"}
     return rules
 
 
