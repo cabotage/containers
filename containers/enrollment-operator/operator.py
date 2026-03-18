@@ -236,13 +236,17 @@ def delete_consul_policy(consul_api, namespace, name):
     )
 
 
+VAULT_TOKEN_PATH = "/var/run/secrets/vault/vault-token"
+CONSUL_TOKEN_PATH = "/var/run/secrets/vault/consul-token"
+
+
 @kopf.on.startup()
 def startup_fn(logger, memo, settings, **kwargs):
     settings.peering.priority = random.randint(0, 32767)
     settings.peering.name = "enrollment-controller-operator"
     settings.peering.clusterwide = True
 
-    with open("/var/run/secrets/vault/vault-token", "r") as f:
+    with open(VAULT_TOKEN_PATH, "r") as f:
         vault_token = f.read()
 
     memo.vault_api = hvac.Client(
@@ -251,7 +255,7 @@ def startup_fn(logger, memo, settings, **kwargs):
         token=vault_token,
     )
 
-    with open("/var/run/secrets/vault/consul-token", "r") as f:
+    with open(CONSUL_TOKEN_PATH, "r") as f:
         consul_token = f.read()
 
     consul_addr_parsed = urlparse("https://consul.cabotage.svc.cluster.local:8443")
@@ -264,14 +268,32 @@ def startup_fn(logger, memo, settings, **kwargs):
     )
 
 
+def _refresh_vault_token(memo, logger):
+    with open(VAULT_TOKEN_PATH, "r") as f:
+        vault_token = f.read()
+    if memo.vault_api.token != vault_token:
+        logger.info("Vault token changed on disk, updating client")
+        memo.vault_api.token = vault_token
+
+
+def _refresh_consul_token(memo, logger):
+    with open(CONSUL_TOKEN_PATH, "r") as f:
+        consul_token = f.read()
+    if memo.consul_api.token != consul_token:
+        logger.info("Consul token changed on disk, updating client")
+        memo.consul_api.token = consul_token
+
+
 @kopf.on.probe(id="consul")
-def check_consul_access(memo, **kwargs):
+def check_consul_access(memo, logger, **kwargs):
+    _refresh_consul_token(memo, logger)
     memo.consul_api.status.leader()
     return True
 
 
 @kopf.on.probe(id="vault")
-def check_vault_access(memo, **kwargs):
+def check_vault_access(memo, logger, **kwargs):
+    _refresh_vault_token(memo, logger)
     memo.vault_api.sys.read_leader_status()
     return True
 
