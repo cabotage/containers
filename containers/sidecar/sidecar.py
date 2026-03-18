@@ -103,18 +103,18 @@ def vault_auth_kubernetes_login(
     token.raise_for_status()
     if wrap:
         click.echo(
-            f'fetched wrapped token with accessor {token.json()["wrap_info"]["accessor"]}'
+            f"fetched wrapped token with accessor {token.json()['wrap_info']['accessor']}"
         )
         if unwrap:
-            click.echo(f'unwrapping accessor {token.json()["wrap_info"]["accessor"]}')
+            click.echo(f"unwrapping accessor {token.json()['wrap_info']['accessor']}")
             token = unwrap_vault_response(
                 vault_ca_file, vault_addr, token.json()["wrap_info"]["token"]
             )
             click.echo(
-                f'fetched unwrapped token with accessor {token.json()["auth"]["accessor"]}'
+                f"fetched unwrapped token with accessor {token.json()['auth']['accessor']}"
             )
     else:
-        click.echo(f'fetched token with accessor {token.json()["auth"]["accessor"]}')
+        click.echo(f"fetched token with accessor {token.json()['auth']['accessor']}")
     return token.json()
 
 
@@ -146,8 +146,8 @@ def service_dns(service_name, namespace, domain):
 
 def pod_dns(pod_ip, namespace, domain):
     return [
-        f'{pod_ip.replace(".", "-")}.{namespace}.pod.{domain}',
-        f'{pod_ip.replace(".", "-")}.{namespace}.pod',
+        f"{pod_ip.replace('.', '-')}.{namespace}.pod.{domain}",
+        f"{pod_ip.replace('.', '-')}.{namespace}.pod",
     ]
 
 
@@ -183,21 +183,19 @@ def request_vault_certificate(
     )
     response.raise_for_status()
     click.echo(
-        f'Obtained Private Key ({response.json()["data"].get("private_key_type")}) and Certificate with:'
+        f"Obtained Private Key ({response.json()['data'].get('private_key_type')}) and Certificate with:"
     )
-    click.echo(f'  - Serial Number: {response.json()["data"].get("serial_number")}')
-    click.echo(f'  - Vault Accessor: {response.json().get("accessor")}')
-    click.echo(f'  - Vault Lease ID: {response.json().get("lease_id")}')
-    click.echo(f'  - Vault Lease Duration: {response.json().get("lease_duration")}')
+    click.echo(f"  - Serial Number: {response.json()['data'].get('serial_number')}")
+    click.echo(f"  - Vault Accessor: {response.json().get('accessor')}")
+    click.echo(f"  - Vault Lease ID: {response.json().get('lease_id')}")
+    click.echo(f"  - Vault Lease Duration: {response.json().get('lease_duration')}")
     return response
 
 
 def write_key_material(cert_dir, cert_object):
-    lease_id = cert_object.get("lease_id")
     private_key = cert_object["data"].get("private_key")
     certificate = cert_object["data"].get("certificate")
     issuing_ca = cert_object["data"].get("issuing_ca")
-    lease_sha = hashlib.sha256(lease_id.encode("utf-8")).hexdigest()
     with open(os.path.join(cert_dir, "key.pem"), "wb") as key_file:
         key_file.write(private_key.encode("utf-8") + b"\n")
     with open(os.path.join(cert_dir, "cert.pem"), "wb") as cert_file:
@@ -212,7 +210,7 @@ def write_key_material(cert_dir, cert_object):
         chain_file.write(certificate.encode("utf-8") + b"\n")
         chain_file.write(issuing_ca.encode("utf-8") + b"\n")
     click.echo(
-        f'Wrote Key Material to {os.path.join(cert_dir, "{cert.pem, key.pem, ca.pem, chain.pem}")}'
+        f"Wrote Key Material to {os.path.join(cert_dir, '{cert.pem, key.pem, ca.pem, chain.pem}')}"
     )
 
 
@@ -220,7 +218,6 @@ def certificate_needs_renewed(cert_dir):
     with open(os.path.join(cert_dir, "cert.pem"), "rb") as cert_file:
         pem_data = cert_file.read()
     cert = x509.load_pem_x509_certificate(pem_data, default_backend())
-    not_valid_before = cert.not_valid_before_utc
     not_valid_after = cert.not_valid_after_utc
     return (
         not_valid_after - datetime.datetime.now(datetime.UTC)
@@ -302,8 +299,8 @@ def request_consul_token(vault_addr, token, vault_ca_file, consul_backend, consu
     )
     response.raise_for_status()
     click.echo("Obtained Consul Token with:")
-    click.echo(f'  - Vault Lease ID: {response.json().get("lease_id")}')
-    click.echo(f'  - Vault Lease Duration: {response.json().get("lease_duration")}')
+    click.echo(f"  - Vault Lease ID: {response.json().get('lease_id')}")
+    click.echo(f"  - Vault Lease Duration: {response.json().get('lease_duration')}")
     return response
 
 
@@ -318,7 +315,7 @@ def write_consul_token(consul_secrets_path, consul_token_object):
     with open(os.path.join(consul_secrets_path, "consul-token"), "wb") as token_file:
         token_file.write(token.encode("utf-8"))
     click.echo(
-        f'Wrote Consul Token to {os.path.join(consul_secrets_path, "consul-token")}'
+        f"Wrote Consul Token to {os.path.join(consul_secrets_path, 'consul-token')}"
     )
 
 
@@ -338,6 +335,226 @@ def vault_fetch_consul_token(
         vault_consul_role,
     )
     write_consul_token(consul_secrets_path, consul_token_response.json())
+
+
+# --- Shared logic for CLI commands ---
+
+
+def do_kube_login(
+    vault_addr,
+    vault_ca_file,
+    vault_secrets_path,
+    vault_auth_kubernetes_role,
+    vault_auth_kubernetes_backend,
+    fetch_consul_token,
+    consul_secrets_path,
+    vault_consul_role,
+    vault_consul_backend,
+    fetch_cert,
+    cert_dir,
+    vault_pki_backend,
+    vault_pki_role,
+    hostname,
+    subdomain,
+    cluster_domain,
+    namespace,
+    pod_name,
+    pod_ip,
+    additional_dns_names,
+    service_names,
+    service_ips,
+    wrap,
+    unwrap,
+):
+    """Authenticate to Vault via Kubernetes auth, write token and optionally
+    fetch consul token and/or TLS certificate.
+
+    Returns the vault token contents as a string.
+    """
+    if fetch_consul_token:
+        if vault_consul_role is None:
+            raise click.BadParameter(
+                "--vault-consul-role is required when fetching consul token"
+            )
+    if fetch_cert:
+        if vault_pki_role is None:
+            raise click.BadParameter(
+                "--vault-pki-role is required when fetching TLS certificate"
+            )
+        if pod_ip is None:
+            raise click.BadParameter(
+                "--pod-ip is required when fetching TLS certificate"
+            )
+
+    if (fetch_cert or fetch_consul_token) and not unwrap:
+        raise click.BadParameter(
+            "--no-unwrap cannot be used with --fetch-consul-token or --fetch-cert!\n"
+            "                        unwrapped token must be accessible during bootstrap"
+        )
+
+    os.makedirs(os.path.join(vault_secrets_path, "leases"), exist_ok=True)
+    with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r") as token_file:
+        jwt = token_file.read()
+
+    token_contents = None
+    if vault_auth_kubernetes_role:
+        click.echo(
+            f"Attempting Vault Auth Login with Kubernetes for {vault_auth_kubernetes_role}"
+        )
+        click.echo("reading jwt for vault kubernetes auth")
+        click.echo("fetching vault token")
+        token = vault_auth_kubernetes_login(
+            vault_ca_file,
+            vault_addr,
+            vault_auth_kubernetes_backend,
+            vault_auth_kubernetes_role,
+            jwt,
+            wrap,
+            unwrap,
+        )
+        if (wrap and unwrap) or not wrap:
+            token_type = "vault-token"
+            token_path = os.path.join(vault_secrets_path, "vault-token")
+            token_contents = token["auth"]["client_token"]
+        else:
+            token_type = "wrapped-vault-token"
+            token_path = os.path.join(vault_secrets_path, "wrapped-vault-token")
+            token_contents = token["wrap_info"]["token"]
+        click.echo(f"writing {token_type} to {token_path}")
+        with open(token_path, "w") as vault_token_file:
+            vault_token_file.write(token_contents)
+
+    if fetch_consul_token:
+        os.makedirs(os.path.join(consul_secrets_path, "leases"), exist_ok=True)
+        vault_fetch_consul_token(
+            vault_addr,
+            token_contents,
+            vault_ca_file,
+            vault_consul_backend,
+            vault_consul_role,
+            consul_secrets_path,
+        )
+    if fetch_cert:
+        os.makedirs(os.path.join(cert_dir, "leases"), exist_ok=True)
+        vault_fetch_certificate(
+            vault_addr,
+            token_contents,
+            vault_ca_file,
+            vault_pki_backend,
+            vault_pki_role,
+            cert_dir,
+            from_cert=False,
+            hostname=hostname,
+            subdomain=subdomain,
+            namespace=namespace,
+            cluster_domain=cluster_domain,
+            pod_name=pod_name,
+            pod_ip=pod_ip,
+            additional_dns_names=additional_dns_names,
+            service_names=service_names,
+            service_ips=service_ips,
+        )
+
+    return token_contents
+
+
+def do_maintain_loop(
+    vault_token,
+    vault_addr,
+    vault_ca_file,
+    vault_secrets_path,
+    consul_secrets_path,
+    cert_dir,
+    vault_pki_backend,
+    vault_pki_role,
+):
+    """Renew vault token and leases in a loop. Exits (raises) if token becomes
+    invalid, allowing the caller or container runtime to handle re-authentication.
+    """
+    vault_token_info = token_lookup_self(vault_ca_file, vault_addr, vault_token).json()
+    click.echo(
+        f"Using token with accessor {vault_token_info['data']['accessor']} and policies {', '.join(vault_token_info['data']['policies'])}"
+    )
+
+    while True:
+        min_sleep = 60
+        max_sleep = 1800
+        click.echo(
+            f"checking vault token with accessor {vault_token_info['data']['accessor']}"
+        )
+        vault_token_info = token_lookup_self(
+            vault_ca_file, vault_addr, vault_token
+        ).json()
+        if vault_token_info["data"]["renewable"]:
+            if vault_token_info["data"]["ttl"] < int(
+                vault_token_info["data"]["creation_ttl"] / 2
+            ):
+                click.echo(
+                    f"renewing vault token with accessor {vault_token_info['data']['accessor']}"
+                )
+                token_renew_self(vault_ca_file, vault_addr, vault_token)
+                sleep = min_sleep
+            else:
+                sleep = max(min_sleep, int(vault_token_info["data"]["ttl"] / 4))
+                sleep = min(sleep, max_sleep) - random.randrange(0, 120)
+        for lease_dir in set(
+            [
+                os.path.join(x, "leases")
+                for x in [vault_secrets_path, consul_secrets_path, cert_dir]
+            ]
+        ):
+            click.echo(f"Checking expiry of leases in {lease_dir}...")
+            for lease_file in os.listdir(lease_dir):
+                click.echo(f"Checking expiry of lease: {lease_file}...")
+                with open(os.path.join(lease_dir, lease_file), "r") as f:
+                    lease_id = f.read()
+                lease_info = leases_lookup(
+                    vault_ca_file, vault_addr, vault_token, lease_id
+                ).json()["data"]
+                if lease_info["id"].startswith(f"{vault_pki_backend}/issue"):
+                    continue
+                if lease_info["ttl"] > 0:
+                    initial_ttl = iso8601.parse_date(
+                        lease_info["expire_time"]
+                    ) - iso8601.parse_date(lease_info["issue_time"])
+                    if lease_info["ttl"] < int(initial_ttl.total_seconds() / 2):
+                        click.echo(f"Renewing lease {lease_info['id']}...")
+                        new_lease = leases_renew(
+                            vault_ca_file, vault_addr, vault_token, lease_id
+                        ).json()
+                        click.echo(
+                            f"Renewed lease {new_lease['lease_id']} for {new_lease['lease_duration']}s!"
+                        )
+                        lease_sha = hashlib.sha256(
+                            new_lease["lease_id"].encode("utf-8")
+                        ).hexdigest()
+                        if lease_sha != lease_file:
+                            os.remove(os.path.join(lease_dir, lease_file))
+                            with open(
+                                os.path.join(lease_dir, lease_sha), "wb"
+                            ) as lease_file:
+                                lease_file.write(new_lease["lease_id"].encode("utf-8"))
+                        else:
+                            pathlib.Path(os.path.join(lease_dir, lease_file)).touch()
+                else:
+                    click.echo('Removing expired lease file for {lease_info["id"]}')
+                    os.remove(os.path.join(lease_dir, lease_file))
+        if os.path.exists(os.path.join(cert_dir, "cert.pem")):
+            if certificate_needs_renewed(cert_dir):
+                vault_fetch_certificate(
+                    vault_addr,
+                    vault_token,
+                    vault_ca_file,
+                    vault_pki_backend,
+                    vault_pki_role,
+                    cert_dir,
+                    from_cert=True,
+                )
+        click.echo(f"sleeping {sleep} seconds...")
+        time.sleep(sleep)
+
+
+# --- CLI commands ---
 
 
 @click.group()
@@ -473,88 +690,32 @@ def kube_login(
     wrap,
     unwrap,
 ):
-    if fetch_consul_token:
-        if vault_consul_role is None:
-            raise click.BadParameter(
-                "--vault-consul-role is required when fetching consul token"
-            )
-    if fetch_cert:
-        if vault_pki_role is None:
-            raise click.BadParameter(
-                "--vault-pki-role is required when fetching TLS certificate"
-            )
-        if pod_ip is None:
-            raise click.BadParameter(
-                "--pod-ip is required when fetching TLS certificate"
-            )
-
-    if (fetch_cert or fetch_consul_token) and not unwrap:
-        raise click.BadParameter(
-            "--no-unwrap cannot be used with --fetch-consul-token or --fetch-cert!\n"
-            "                        unwrapped token must be accessible during bootstrap"
-        )
-
-    os.makedirs(os.path.join(vault_secrets_path, "leases"), exist_ok=True)
-    with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r") as token_file:
-        jwt = token_file.read()
-
-    if vault_auth_kubernetes_role:
-        click.echo(
-            f"Attempting Vault Auth Login with Kubernetes for {vault_auth_kubernetes_role}"
-        )
-        click.echo("reading jwt for vault kubernetes auth")
-        click.echo("fetching vault token")
-        token = vault_auth_kubernetes_login(
-            vault_ca_file,
-            vault_addr,
-            vault_auth_kubernetes_backend,
-            vault_auth_kubernetes_role,
-            jwt,
-            wrap,
-            unwrap,
-        )
-        if (wrap and unwrap) or not wrap:
-            token_type = "vault-token"
-            token_path = os.path.join(vault_secrets_path, "vault-token")
-            token_contents = token["auth"]["client_token"]
-        else:
-            token_type = "wrapped-vault-token"
-            token_path = os.path.join(vault_secrets_path, "wrapped-vault-token")
-            token_contents = token["wrap_info"]["token"]
-        click.echo(f"writing {token_type} to {token_path}")
-        with open(token_path, "w") as vault_token_file:
-            vault_token_file.write(token_contents)
-
-    if fetch_consul_token:
-        os.makedirs(os.path.join(consul_secrets_path, "leases"), exist_ok=True)
-        vault_fetch_consul_token(
-            vault_addr,
-            token_contents,
-            vault_ca_file,
-            vault_consul_backend,
-            vault_consul_role,
-            consul_secrets_path,
-        )
-    if fetch_cert:
-        os.makedirs(os.path.join(cert_dir, "leases"), exist_ok=True)
-        vault_fetch_certificate(
-            vault_addr,
-            token_contents,
-            vault_ca_file,
-            vault_pki_backend,
-            vault_pki_role,
-            cert_dir,
-            from_cert=False,
-            hostname=hostname,
-            subdomain=subdomain,
-            namespace=namespace,
-            cluster_domain=cluster_domain,
-            pod_name=pod_name,
-            pod_ip=pod_ip,
-            additional_dns_names=additional_dns_names,
-            service_names=service_names,
-            service_ips=service_ips,
-        )
+    do_kube_login(
+        vault_addr=vault_addr,
+        vault_ca_file=vault_ca_file,
+        vault_secrets_path=vault_secrets_path,
+        vault_auth_kubernetes_role=vault_auth_kubernetes_role,
+        vault_auth_kubernetes_backend=vault_auth_kubernetes_backend,
+        fetch_consul_token=fetch_consul_token,
+        consul_secrets_path=consul_secrets_path,
+        vault_consul_role=vault_consul_role,
+        vault_consul_backend=vault_consul_backend,
+        fetch_cert=fetch_cert,
+        cert_dir=cert_dir,
+        vault_pki_backend=vault_pki_backend,
+        vault_pki_role=vault_pki_role,
+        hostname=hostname,
+        subdomain=subdomain,
+        cluster_domain=cluster_domain,
+        namespace=namespace,
+        pod_name=pod_name,
+        pod_ip=pod_ip,
+        additional_dns_names=additional_dns_names,
+        service_names=service_names,
+        service_ips=service_ips,
+        wrap=wrap,
+        unwrap=unwrap,
+    )
 
 
 @cli.command()
@@ -638,87 +799,188 @@ def maintain(
         write_vault_token_file.close()
         vault_token_file.close()
         os.remove(vault_token_file.name)
-    vault_token_info = token_lookup_self(vault_ca_file, vault_addr, vault_token).json()
-    click.echo(
-        f'Using token with accessor {vault_token_info["data"]["accessor"]} and policies {", ".join(vault_token_info["data"]["policies"])}'
+    do_maintain_loop(
+        vault_token=vault_token,
+        vault_addr=vault_addr,
+        vault_ca_file=vault_ca_file,
+        vault_secrets_path=vault_secrets_path,
+        consul_secrets_path=consul_secrets_path,
+        cert_dir=cert_dir,
+        vault_pki_backend=vault_pki_backend,
+        vault_pki_role=vault_pki_role,
     )
 
-    while True:
-        min_sleep = 60
-        max_sleep = 1800
-        click.echo(
-            f'checking vault token with accessor {vault_token_info["data"]["accessor"]}'
-        )
-        vault_token_info = token_lookup_self(
-            vault_ca_file, vault_addr, vault_token
-        ).json()
-        if vault_token_info["data"]["renewable"]:
-            if vault_token_info["data"]["ttl"] < int(
-                vault_token_info["data"]["creation_ttl"] / 2
-            ):
-                click.echo(
-                    f'renewing vault token with accessor {vault_token_info["data"]["accessor"]}'
-                )
-                token_renew_self(vault_ca_file, vault_addr, vault_token)
-                sleep = min_sleep
-            else:
-                sleep = max(min_sleep, int(vault_token_info["data"]["ttl"] / 4))
-                sleep = min(sleep, max_sleep) - random.randrange(0, 120)
-        for lease_dir in set(
-            [
-                os.path.join(x, "leases")
-                for x in [vault_secrets_path, consul_secrets_path, cert_dir]
-            ]
-        ):
-            click.echo(f"Checking expiry of leases in {lease_dir}...")
-            for lease_file in os.listdir(lease_dir):
-                click.echo(f"Checking expiry of lease: {lease_file}...")
-                with open(os.path.join(lease_dir, lease_file), "r") as f:
-                    lease_id = f.read()
-                lease_info = leases_lookup(
-                    vault_ca_file, vault_addr, vault_token, lease_id
-                ).json()["data"]
-                if lease_info["id"].startswith(f"{vault_pki_backend}/issue"):
-                    continue
-                if lease_info["ttl"] > 0:
-                    initial_ttl = iso8601.parse_date(
-                        lease_info["expire_time"]
-                    ) - iso8601.parse_date(lease_info["issue_time"])
-                    if lease_info["ttl"] < int(initial_ttl.total_seconds() / 2):
-                        click.echo(f'Renewing lease {lease_info["id"]}...')
-                        new_lease = leases_renew(
-                            vault_ca_file, vault_addr, vault_token, lease_id
-                        ).json()
-                        click.echo(
-                            f'Renewed lease {new_lease["lease_id"]} for {new_lease["lease_duration"]}s!'
-                        )
-                        lease_sha = hashlib.sha256(
-                            new_lease["lease_id"].encode("utf-8")
-                        ).hexdigest()
-                        if lease_sha != lease_file:
-                            os.remove(os.path.join(lease_dir, lease_file))
-                            with open(
-                                os.path.join(lease_dir, lease_sha), "wb"
-                            ) as lease_file:
-                                lease_file.write(new_lease["lease_id"].encode("utf-8"))
-                        else:
-                            pathlib.Path(os.path.join(lease_dir, lease_file)).touch()
-                else:
-                    click.echo('Removing expired lease file for {lease_info["id"]}')
-                    os.remove(os.path.join(lease_dir, lease_file))
-        if os.path.exists(os.path.join(cert_dir, "cert.pem")):
-            if certificate_needs_renewed(cert_dir):
-                vault_fetch_certificate(
-                    vault_addr,
-                    vault_token,
-                    vault_ca_file,
-                    vault_pki_backend,
-                    vault_pki_role,
-                    cert_dir,
-                    from_cert=True,
-                )
-        click.echo(f"sleeping {sleep} seconds...")
-        time.sleep(sleep)
+
+@cli.command("kube-login-and-maintain")
+@click.option(
+    "--namespace",
+    default="default",
+    help="namespace as defined by pod.metadata.namespace",
+)
+@click.option(
+    "--vault-addr",
+    default="https://vault.cabotage.svc.cluster.local",
+    help="Vault Address to request for Kubernetes Auth.",
+)
+@click.option(
+    "--vault-ca-file",
+    default="/var/run/secrets/cabotage.io/ca.crt",
+    help="Certificate Authority to verify Vault TLS.",
+)
+@click.option(
+    "--vault-secrets-path",
+    default="/var/run/secrets/vault/",
+    help="Directory to store secrets in",
+    type=click.Path(exists=True, file_okay=False, writable=True),
+)
+@click.option(
+    "--vault-auth-kubernetes-role",
+    default=None,
+    help="Vault Role to request for Kubernetes Auth.",
+)
+@click.option(
+    "--vault-auth-kubernetes-backend",
+    default="auth/kubernetes/login",
+    help="Path to attempt Vault Kubernetes Auth against",
+)
+@click.option(
+    "--fetch-consul-token/--no-fetch-consul-token",
+    default=False,
+    help="Fetch a Consul Token from a Vault Consul Secret Backend",
+)
+@click.option(
+    "--consul-secrets-path",
+    default="/var/run/secrets/vault/",
+    help="Directory to store consul token in",
+    type=click.Path(exists=True, file_okay=False, writable=True),
+)
+@click.option(
+    "--vault-consul-role",
+    default=None,
+    help="Vault Role to request for Consul token.",
+)
+@click.option(
+    "--vault-consul-backend",
+    default="cabotage-consul",
+    help="Path to fetch Consul creds from",
+)
+@click.option(
+    "--fetch-cert/--no-fetch-cert",
+    default=False,
+    help="Fetch a TLS Certificate from the Vault CA",
+)
+@click.option(
+    "--cert-dir",
+    default="/var/run/secrets/vault",
+    help="directory to store tls key and cert",
+    type=click.Path(),
+)
+@click.option(
+    "--vault-pki-backend",
+    default="cabotage-ca",
+    help="Vault PKI backend to request certificate from.",
+)
+@click.option("--vault-pki-role", help="Vault PKI role to request certificate from.")
+@click.option("--hostname", default="", help="hostname as defined by pod.spec.hostname")
+@click.option(
+    "--subdomain", default="", help="subdomain as defined by pod.spec.subdomain"
+)
+@click.option(
+    "--cluster-domain", default="cluster.local", help="kubernetes cluster domain"
+)
+@click.option("--pod-name", help="name as defined by pod.metadata.name")
+@click.option("--pod-ip", help="pod IP address as defined by pod.status.podIP")
+@click.option(
+    "--additional-dns-names", default="", help="additional dns names; comma separated"
+)
+@click.option(
+    "--service-names",
+    default="",
+    help="service names that resolve to this Pod; comma separated",
+)
+@click.option(
+    "--service-ips",
+    default="",
+    help="service IP addresses that resolve to this Pod; comma separated",
+)
+@click.option(
+    "--wrap/--no-wrap",
+    default=True,
+    help="Use Vault Response Wrapping when requesting tokens, etc",
+)
+@click.option(
+    "--unwrap/--no-unwrap",
+    default=True,
+    help="Unwrap Vault responses, may not be desirable for some apps",
+)
+def kube_login_and_maintain(
+    namespace,
+    vault_addr,
+    vault_ca_file,
+    vault_secrets_path,
+    vault_auth_kubernetes_role,
+    vault_auth_kubernetes_backend,
+    fetch_consul_token,
+    consul_secrets_path,
+    vault_consul_role,
+    vault_consul_backend,
+    fetch_cert,
+    cert_dir,
+    vault_pki_backend,
+    vault_pki_role,
+    hostname,
+    subdomain,
+    cluster_domain,
+    pod_name,
+    pod_ip,
+    additional_dns_names,
+    service_names,
+    service_ips,
+    wrap,
+    unwrap,
+):
+    """Authenticate to Vault via Kubernetes auth, then maintain the token.
+
+    Combines kube-login and maintain into a single command suitable for use
+    as a native sidecar container. If the token becomes invalid, the process
+    exits and Kubernetes restarts the container, re-running authentication.
+    """
+    token_contents = do_kube_login(
+        vault_addr=vault_addr,
+        vault_ca_file=vault_ca_file,
+        vault_secrets_path=vault_secrets_path,
+        vault_auth_kubernetes_role=vault_auth_kubernetes_role,
+        vault_auth_kubernetes_backend=vault_auth_kubernetes_backend,
+        fetch_consul_token=fetch_consul_token,
+        consul_secrets_path=consul_secrets_path,
+        vault_consul_role=vault_consul_role,
+        vault_consul_backend=vault_consul_backend,
+        fetch_cert=fetch_cert,
+        cert_dir=cert_dir,
+        vault_pki_backend=vault_pki_backend,
+        vault_pki_role=vault_pki_role,
+        hostname=hostname,
+        subdomain=subdomain,
+        cluster_domain=cluster_domain,
+        namespace=namespace,
+        pod_name=pod_name,
+        pod_ip=pod_ip,
+        additional_dns_names=additional_dns_names,
+        service_names=service_names,
+        service_ips=service_ips,
+        wrap=wrap,
+        unwrap=unwrap,
+    )
+    do_maintain_loop(
+        vault_token=token_contents,
+        vault_addr=vault_addr,
+        vault_ca_file=vault_ca_file,
+        vault_secrets_path=vault_secrets_path,
+        consul_secrets_path=consul_secrets_path,
+        cert_dir=cert_dir,
+        vault_pki_backend=vault_pki_backend,
+        vault_pki_role=vault_pki_role,
+    )
 
 
 if __name__ == "__main__":
