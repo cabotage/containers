@@ -1,0 +1,131 @@
+name: Build and Push Container Images
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_PREFIX: ghcr.io/cabotage/containers
+
+jobs:
+  determine-targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Determine which containers to build
+        id: set-matrix
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          ALL_CONTAINERS='["base","cabotage-ca-admission","enrollment-operator","registry","sidecar"]'
+
+          # Check if tag is "{container-name}-{version}" or just "{version}"
+          MATCHED=""
+          for name in base cabotage-ca-admission enrollment-operator registry sidecar; do
+            if [[ "$TAG" == "$name-"* ]]; then
+              MATCHED="$name"
+              break
+            fi
+          done
+
+          if [ -n "$MATCHED" ]; then
+            echo "matrix=[\"$MATCHED\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$ALL_CONTAINERS" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-and-push:
+    needs: determine-targets
+    concurrency:
+      group: build-${{ matrix.container }}-${{ matrix.config.arch }}-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      matrix:
+        container: ${{ fromJson(needs.determine-targets.outputs.matrix) }}
+        config:
+          - { os: ubuntu-24.04, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Strip container name prefix if present
+          VERSION="${TAG#${{ matrix.container }}-}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine tags
+        id: tags
+        run: |
+          IMAGE="${IMAGE_PREFIX}/${{ matrix.container }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          ARCH="${{ matrix.config.arch }}"
+          TAGS="${IMAGE}:${VERSION}-${ARCH},${IMAGE}:latest-${ARCH}"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: containers/${{ matrix.container }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+  create-manifests:
+    needs: [determine-targets, build-and-push]
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        container: ${{ fromJson(needs.determine-targets.outputs.matrix) }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#${{ matrix.container }}-}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create version manifest and push
+        run: |
+          IMAGE="${IMAGE_PREFIX}/${{ matrix.container }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${VERSION}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+
+      - name: Create latest manifest and push
+        run: |
+          IMAGE="${IMAGE_PREFIX}/${{ matrix.container }}"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}:latest-amd64" \
+            "${IMAGE}:latest-arm64"
