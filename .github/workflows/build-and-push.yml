@@ -18,15 +18,20 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Determine which containers to build
         id: set-matrix
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          ALL_CONTAINERS='["base","cabotage-ca-admission","enrollment-operator","registry","sidecar"]'
 
-          # Check if tag is "{container-name}-{version}" or just "{version}"
+          # Build list of containers from directory names
+          ALL_CONTAINERS=$(ls -d containers/*/Dockerfile | xargs -n1 dirname | xargs -n1 basename | jq -R -s -c 'split("\n") | map(select(. != ""))')
+
+          # Check if tag matches "{container-name}-{version}"
           MATCHED=""
-          for name in base cabotage-ca-admission enrollment-operator registry sidecar; do
+          for name in $(echo "$ALL_CONTAINERS" | jq -r '.[]'); do
             if [[ "$TAG" == "$name-"* ]]; then
               MATCHED="$name"
               break
