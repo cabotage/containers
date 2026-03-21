@@ -1,0 +1,117 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  namespace: cabotage
+  name: cabotage-tailscale-operator-manager-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cabotage-tailscale-operator-manager-role-cluster
+rules:
+
+  # Framework: knowing which other operators are running (i.e. peering).
+  - apiGroups: [kopf.dev]
+    resources: [clusterkopfpeerings]
+    verbs: [list, watch, patch, get]
+
+  # Framework: runtime observation of namespaces & CRDs (addition/deletion).
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [list, watch]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list, watch]
+
+  # Framework: posting the events about the handlers progress/errors.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+
+  # Application: watch the CabotageTailscaleOperatorConfig CRD cluster-wide.
+  - apiGroups: [cabotage.io]
+    resources: [cabotagetailscaleoperatorconfigs]
+    verbs: [list, watch, patch, get]
+
+  # Manage K8s resources in org namespaces for the Tailscale operator.
+  - apiGroups: [""]
+    resources: [secrets, serviceaccounts]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, create, update, patch, delete]
+
+  # Manage ClusterRoleBinding subjects (add/remove operator SAs).
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [get, list, update, patch]
+
+  # Delegated permissions — the operator creates a Role granting these,
+  # so it must hold them itself (K8s RBAC escalation prevention).
+  - apiGroups: [""]
+    resources: [configmaps, events, pods, services, services/status]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingresses/status]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [tailscale.com]
+    resources: ["*"]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: cabotage
+  name: cabotage-tailscale-operator-manager-role-namespaced
+rules:
+
+  # Framework: knowing which other operators are running (i.e. peering).
+  - apiGroups: [kopf.dev]
+    resources: [kopfpeerings]
+    verbs: [list, watch, patch, get]
+
+  # Framework: posting the events about the handlers progress/errors.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create]
+
+  # Application: watching & handling for the custom resource we declare.
+  - apiGroups: [cabotage.io]
+    resources: [cabotagetailscaleoperatorconfigs]
+    verbs: [list, watch, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cabotage-tailscale-operator-manager-rolebinding-cluster
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cabotage-tailscale-operator-manager-role-cluster
+subjects:
+  - kind: ServiceAccount
+    name: cabotage-tailscale-operator-manager-account
+    namespace: cabotage
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: cabotage
+  name: cabotage-tailscale-operator-manager-rolebinding-namespaced
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cabotage-tailscale-operator-manager-role-namespaced
+subjects:
+  - kind: ServiceAccount
+    name: cabotage-tailscale-operator-manager-account
