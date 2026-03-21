@@ -334,7 +334,7 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     # 6. Operator Deployment
     deploy_name = operator_sa
     env_vars = [
-        kubernetes.client.V1EnvVar(name="OPERATOR_HOSTNAME", value=f"ts-operator-{org_slug}"),
+        kubernetes.client.V1EnvVar(name="OPERATOR_HOSTNAME", value=f"ts-operator-{namespace}"),
         kubernetes.client.V1EnvVar(name="OPERATOR_NAMESPACE", value=namespace),
         kubernetes.client.V1EnvVar(name="TS_KUBE_SECRET", value=f"{deploy_name}-state"),
         kubernetes.client.V1EnvVar(name="CLIENT_ID_FILE", value="/oauth/client_id"),
