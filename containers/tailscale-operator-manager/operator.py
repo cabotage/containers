@@ -23,6 +23,17 @@ def _oauth_secret_name(crd_name):
     return f"tailscale-oauth-{crd_name}"
 
 
+def _proxy_group_name(crd_name):
+    return f"ingress-{crd_name}"
+
+
+PROXY_GROUP_API = {
+    "group": "tailscale.com",
+    "version": "v1alpha1",
+    "plural": "proxygroups",
+}
+
+
 def _labels(org_slug):
     return {
         LABEL_KEY: LABEL_VALUE,
@@ -213,6 +224,52 @@ def _delete_if_exists(fn, *args, logger=None):
                 logger.warning(f"Failed to delete {args}: {exc}")
 
 
+def _ensure_proxy_group(custom_api, namespace, crd_name, labels, logger):
+    """Create the ProxyGroup so ingresses appear as Tailscale Services."""
+    pg_name = _proxy_group_name(crd_name)
+    body = {
+        "apiVersion": f"{PROXY_GROUP_API['group']}/{PROXY_GROUP_API['version']}",
+        "kind": "ProxyGroup",
+        "metadata": {
+            "name": pg_name,
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "spec": {
+            "type": "ingress",
+        },
+    }
+    try:
+        custom_api.get_namespaced_custom_object(
+            PROXY_GROUP_API["group"], PROXY_GROUP_API["version"],
+            namespace, PROXY_GROUP_API["plural"], pg_name,
+        )
+        logger.info(f"ProxyGroup {pg_name} already exists")
+    except ApiException as exc:
+        if exc.status == 404:
+            custom_api.create_namespaced_custom_object(
+                PROXY_GROUP_API["group"], PROXY_GROUP_API["version"],
+                namespace, PROXY_GROUP_API["plural"], body,
+            )
+            logger.info(f"Created ProxyGroup {pg_name}")
+        else:
+            raise
+
+
+def _delete_proxy_group(custom_api, namespace, crd_name, logger):
+    """Delete the ProxyGroup."""
+    pg_name = _proxy_group_name(crd_name)
+    try:
+        custom_api.delete_namespaced_custom_object(
+            PROXY_GROUP_API["group"], PROXY_GROUP_API["version"],
+            namespace, PROXY_GROUP_API["plural"], pg_name,
+        )
+        logger.info(f"Deleted ProxyGroup {pg_name}")
+    except ApiException as exc:
+        if exc.status != 404:
+            logger.warning(f"Failed to delete ProxyGroup {pg_name}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # Operator role rules (what the Tailscale operator needs within its namespace)
 # ---------------------------------------------------------------------------
@@ -305,6 +362,7 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     core_api = kubernetes.client.CoreV1Api()
     apps_api = kubernetes.client.AppsV1Api()
     rbac_api = kubernetes.client.RbacAuthorizationV1Api()
+    custom_api = kubernetes.client.CustomObjectsApi()
 
     # 1. OAuth Secret
     _ensure_secret(core_api, namespace, secret_name, {
@@ -395,6 +453,9 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
             raise
     logger.info(f"Ensured Deployment {deploy_name}")
 
+    # 7. ProxyGroup for HA ingress (Tailscale Services instead of devices)
+    _ensure_proxy_group(custom_api, namespace, name, labels, logger)
+
     # Extract version from image tag
     version = operator_image.rsplit(":", 1)[-1] if ":" in operator_image else "unknown"
 
@@ -410,8 +471,10 @@ def delete_operator(spec, name, namespace, logger, **kwargs):
     core_api = kubernetes.client.CoreV1Api()
     apps_api = kubernetes.client.AppsV1Api()
     rbac_api = kubernetes.client.RbacAuthorizationV1Api()
+    custom_api = kubernetes.client.CustomObjectsApi()
 
     # Delete in reverse order
+    _delete_proxy_group(custom_api, namespace, name, logger)
     _delete_if_exists(apps_api.delete_namespaced_deployment, operator_sa, namespace, logger=logger)
     _delete_if_exists(rbac_api.delete_namespaced_role_binding, operator_sa, namespace, logger=logger)
     _delete_if_exists(rbac_api.delete_namespaced_role, operator_sa, namespace, logger=logger)
