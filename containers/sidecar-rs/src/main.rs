@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
-use rand::Rng;
+use rand::Rng as _;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -552,7 +552,7 @@ fn do_maintain_loop(
                 sleep_secs = min_sleep;
             } else {
                 sleep_secs = (ttl / 4).max(min_sleep).min(max_sleep)
-                    - rand::thread_rng().gen_range(0..120);
+                    - rand::random_range(0..120);
             }
         }
 
