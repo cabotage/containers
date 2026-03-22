@@ -4,11 +4,28 @@ import hashlib
 import os
 import pathlib
 import random
+import signal
+import threading
 import time
 
 import click
 import iso8601
 import requests
+
+REQUEST_TIMEOUT = 30
+
+# Event used to interrupt long sleeps on SIGTERM/SIGINT.
+_shutdown_event = threading.Event()
+
+
+def _handle_shutdown_signal(signum, frame):
+    signame = signal.Signals(signum).name
+    click.echo(f"Received {signame}, shutting down gracefully...")
+    _shutdown_event.set()
+
+
+signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+signal.signal(signal.SIGINT, _handle_shutdown_signal)
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -19,6 +36,7 @@ def wrapping_token_lookup(vault_ca_file, vault_addr, token):
         f"{vault_addr}/v1/sys/wrapping/lookup",
         json={"token": token},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -29,6 +47,7 @@ def unwrap_vault_response(vault_ca_file, vault_addr, wrapping_token):
         f"{vault_addr}/v1/sys/wrapping/unwrap",
         headers={"X-Vault-Token": wrapping_token},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -39,6 +58,7 @@ def token_lookup_self(vault_ca_file, vault_addr, token):
         f"{vault_addr}/v1/auth/token/lookup-self",
         headers={"X-Vault-Token": token},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -50,6 +70,7 @@ def token_renew_self(vault_ca_file, vault_addr, token):
         headers={"X-Vault-Token": token},
         json={},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -61,6 +82,7 @@ def token_revoke_self(vault_ca_file, vault_addr, token):
         headers={"X-Vault-Token": token},
         json={},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -72,6 +94,7 @@ def leases_lookup(vault_ca_file, vault_addr, token, lease_id):
         headers={"X-Vault-Token": token},
         json={"lease_id": lease_id},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -83,6 +106,7 @@ def leases_renew(vault_ca_file, vault_addr, token, lease_id):
         headers={"X-Vault-Token": token},
         json={"lease_id": lease_id},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     return response
@@ -99,6 +123,7 @@ def vault_auth_kubernetes_login(
         headers=headers,
         json={"jwt": jwt, "role": vault_role},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     token.raise_for_status()
     if wrap:
@@ -180,6 +205,7 @@ def request_vault_certificate(
         },
         headers={"X-Vault-Token": vault_token},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     click.echo(
@@ -296,6 +322,7 @@ def request_consul_token(vault_addr, token, vault_ca_file, consul_backend, consu
         f"{vault_addr}/v1/{consul_backend}/creds/{consul_role}",
         headers={"X-Vault-Token": token},
         verify=vault_ca_file,
+        timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
     click.echo("Obtained Consul Token with:")
@@ -476,9 +503,10 @@ def do_maintain_loop(
         f"Using token with accessor {vault_token_info['data']['accessor']} and policies {', '.join(vault_token_info['data']['policies'])}"
     )
 
-    while True:
+    while not _shutdown_event.is_set():
         min_sleep = 60
         max_sleep = 1800
+        sleep = min_sleep
         click.echo(
             f"checking vault token with accessor {vault_token_info['data']['accessor']}"
         )
@@ -551,7 +579,9 @@ def do_maintain_loop(
                     from_cert=True,
                 )
         click.echo(f"sleeping {sleep} seconds...")
-        time.sleep(sleep)
+        _shutdown_event.wait(timeout=sleep)
+
+    click.echo("Shutdown complete.")
 
 
 # --- CLI commands ---
