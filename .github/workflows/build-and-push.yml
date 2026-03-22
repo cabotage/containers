@@ -22,11 +22,11 @@ jobs:
         id: set-matrix
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          ALL_CONTAINERS='["base","cabotage-ca-admission","enrollment-operator","registry","sidecar"]'
+          ALL_CONTAINERS='["base","cabotage-ca-admission","enrollment-operator","registry","sidecar-rs","sidecar"]'
 
           # Check if tag is "{container-name}-{version}" or just "{version}"
           MATCHED=""
-          for name in base cabotage-ca-admission enrollment-operator registry sidecar; do
+          for name in base cabotage-ca-admission enrollment-operator registry sidecar-rs sidecar; do
             if [[ "$TAG" == "$name-"* ]]; then
               MATCHED="$name"
               break
