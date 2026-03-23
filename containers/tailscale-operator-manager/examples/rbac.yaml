@@ -34,54 +34,10 @@ rules:
     resources: [cabotagetailscaleoperatorconfigs, cabotagetailscaleoperatorconfigs/status]
     verbs: [list, watch, patch, get]
 
-  # Manage K8s resources in org namespaces for the Tailscale operator.
-  - apiGroups: [""]
-    resources: [secrets, serviceaccounts]
-    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
-  - apiGroups: [apps]
-    resources: [deployments]
-    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [roles, rolebindings]
-    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
-
-  # Manage ClusterRoleBinding subjects (add/remove operator SAs).
-  # Scoped to only the tailscale-operator binding — prevents escalation
-  # to other ClusterRoleBindings (e.g. cluster-admin).
-  - apiGroups: [rbac.authorization.k8s.io]
-    resources: [clusterrolebindings]
-    resourceNames: ["tailscale-operator"]
-    verbs: [get, update, patch]
-
-  # Delegated permissions — the manager must hold every permission it grants
-  # via the tailscale-operator ClusterRole (K8s RBAC escalation prevention).
-  - apiGroups: [""]
-    resources: [nodes]
-    verbs: [get, list, watch]
-  - apiGroups: [""]
-    resources: [configmaps, events, pods]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [""]
-    resources: [services, services/status]
-    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
-  - apiGroups: [apps]
-    resources: [statefulsets]
-    verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [coordination.k8s.io]
-    resources: [leases]
-    verbs: [get, list, watch, create, update, patch]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [get, list, watch]
-  - apiGroups: [networking.k8s.io]
-    resources: [ingresses, ingresses/status]
-    verbs: [get, list, watch, update, patch]
-  - apiGroups: [networking.k8s.io]
-    resources: [ingressclasses]
-    verbs: [get, list, watch, create, update, patch, delete]
+  # Manage Tailnet CRDs and ProxyGroups (cluster-scoped).
   - apiGroups: [tailscale.com]
-    resources: ["*"]
-    verbs: [get, list, watch, create, update, patch, delete]
+    resources: [tailnets, proxygroups]
+    verbs: [get, create, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
