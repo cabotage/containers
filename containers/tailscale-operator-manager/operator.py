@@ -207,6 +207,44 @@ def _delete_if_exists(fn, *args, logger=None):
                 logger.warning(f"Failed to delete {args}: {exc}")
 
 
+def _ingress_class_name(crd_name):
+    return f"tailscale-{crd_name}"
+
+
+def _ensure_ingress_class(networking_api, crd_name, labels, logger):
+    """Create per-org IngressClass so the operator only watches its own ingresses."""
+    ic_name = _ingress_class_name(crd_name)
+    body = kubernetes.client.V1IngressClass(
+        metadata=kubernetes.client.V1ObjectMeta(
+            name=ic_name,
+            labels=labels,
+        ),
+        spec=kubernetes.client.V1IngressClassSpec(
+            controller="tailscale.com/ts-ingress",
+        ),
+    )
+    try:
+        networking_api.read_ingress_class(ic_name)
+        logger.info(f"IngressClass {ic_name} already exists")
+    except ApiException as exc:
+        if exc.status == 404:
+            networking_api.create_ingress_class(body)
+            logger.info(f"Created IngressClass {ic_name}")
+        else:
+            raise
+
+
+def _delete_ingress_class(networking_api, crd_name, logger):
+    """Delete per-org IngressClass."""
+    ic_name = _ingress_class_name(crd_name)
+    try:
+        networking_api.delete_ingress_class(ic_name)
+        logger.info(f"Deleted IngressClass {ic_name}")
+    except ApiException as exc:
+        if exc.status != 404:
+            logger.warning(f"Failed to delete IngressClass {ic_name}: {exc}")
+
+
 def _ensure_proxy_group(custom_api, crd_name, labels, default_tags, logger):
     """Create the ProxyGroup so ingresses appear as Tailscale Services."""
     pg_name = _proxy_group_name(crd_name)
@@ -260,89 +298,8 @@ def _delete_proxy_group(custom_api, crd_name, logger):
 
 
 # ---------------------------------------------------------------------------
-# Operator role rules (what the Tailscale operator needs within its namespace)
+# RBAC rules for proxy pods (namespace-scoped)
 # ---------------------------------------------------------------------------
-
-
-def _operator_role_rules():
-    return [
-        kubernetes.client.V1PolicyRule(
-            api_groups=[""],
-            resources=["secrets", "serviceaccounts", "configmaps", "events"],
-            verbs=[
-                "get",
-                "list",
-                "watch",
-                "create",
-                "update",
-                "patch",
-                "delete",
-                "deletecollection",
-            ],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=[""],
-            resources=["services", "services/status"],
-            verbs=[
-                "get",
-                "list",
-                "watch",
-                "create",
-                "update",
-                "patch",
-                "delete",
-                "deletecollection",
-            ],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=[""],
-            resources=["pods"],
-            verbs=["get", "list", "watch"],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=["apps"],
-            resources=["statefulsets", "deployments"],
-            verbs=[
-                "get",
-                "list",
-                "watch",
-                "create",
-                "update",
-                "patch",
-                "delete",
-                "deletecollection",
-            ],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=["networking.k8s.io"],
-            resources=["ingresses", "ingresses/status"],
-            verbs=["get", "list", "watch", "update", "patch"],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=["tailscale.com"],
-            resources=["*"],
-            verbs=["get", "list", "watch", "create", "update", "patch", "delete"],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=["coordination.k8s.io"],
-            resources=["leases"],
-            verbs=["get", "list", "watch", "create", "update", "patch"],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=["rbac.authorization.k8s.io"],
-            resources=["roles", "rolebindings"],
-            verbs=[
-                "get",
-                "list",
-                "watch",
-                "create",
-                "update",
-                "patch",
-                "delete",
-                "deletecollection",
-            ],
-        ),
-    ]
 
 
 def _proxies_role_rules():
@@ -401,25 +358,25 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
         else:
             raise
 
-    # 2. ServiceAccounts
+    # 2. Per-org IngressClass
+    networking_api = kubernetes.client.NetworkingV1Api()
+    _ensure_ingress_class(networking_api, name, labels, logger)
+
+    # 3. ServiceAccounts
     _ensure_service_account(core_api, namespace, operator_sa, labels)
     _ensure_service_account(core_api, namespace, "proxies", labels)
     logger.info("Ensured ServiceAccounts")
 
-    # 3. Operator Role + RoleBinding
-    _ensure_role(rbac_api, namespace, operator_sa, _operator_role_rules(), labels)
-    _ensure_role_binding(
-        rbac_api, namespace, operator_sa, operator_sa, operator_sa, labels
-    )
-    logger.info("Ensured operator RBAC")
+    # 3. ClusterRoleBinding subject (grants operator cluster-wide access
+    #    via the pre-provisioned tailscale-operator ClusterRole — no
+    #    redundant namespace Role needed)
+    _ensure_cluster_role_binding_subject(rbac_api, namespace, operator_sa, logger)
 
-    # 4. Proxies Role + RoleBinding
+    # 4. Proxies Role + RoleBinding (proxies don't have a ClusterRole,
+    #    they only need namespace-scoped secret access for their state)
     _ensure_role(rbac_api, namespace, "proxies", _proxies_role_rules(), labels)
     _ensure_role_binding(rbac_api, namespace, "proxies", "proxies", "proxies", labels)
     logger.info("Ensured proxies RBAC")
-
-    # 5. ClusterRoleBinding subject
-    _ensure_cluster_role_binding_subject(rbac_api, namespace, operator_sa, logger)
 
     # 6. Operator Deployment (WIF mode — JWT from cabotage OIDC issuer)
     deploy_name = operator_sa
@@ -433,6 +390,10 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
         ),
         # CLIENT_ID (not CLIENT_ID_FILE) triggers WIF mode in the operator
         kubernetes.client.V1EnvVar(name="CLIENT_ID", value=client_id),
+        # Per-org IngressClass so this operator only watches its own ingresses
+        kubernetes.client.V1EnvVar(
+            name="OPERATOR_INGRESS_CLASS_NAME", value=_ingress_class_name(name)
+        ),
     ]
     if default_tags:
         env_vars.append(
@@ -516,15 +477,11 @@ def delete_operator(spec, name, namespace, logger, **kwargs):
     custom_api = kubernetes.client.CustomObjectsApi()
 
     # Delete in reverse order
+    networking_api = kubernetes.client.NetworkingV1Api()
+    _delete_ingress_class(networking_api, name, logger)
     _delete_proxy_group(custom_api, name, logger)
     _delete_if_exists(
         apps_api.delete_namespaced_deployment, operator_sa, namespace, logger=logger
-    )
-    _delete_if_exists(
-        rbac_api.delete_namespaced_role_binding, operator_sa, namespace, logger=logger
-    )
-    _delete_if_exists(
-        rbac_api.delete_namespaced_role, operator_sa, namespace, logger=logger
     )
     _delete_if_exists(
         rbac_api.delete_namespaced_role_binding, "proxies", namespace, logger=logger

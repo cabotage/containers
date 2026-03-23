@@ -46,9 +46,12 @@ rules:
     verbs: [get, list, watch, create, update, patch, delete, deletecollection]
 
   # Manage ClusterRoleBinding subjects (add/remove operator SAs).
+  # Scoped to only the tailscale-operator binding — prevents escalation
+  # to other ClusterRoleBindings (e.g. cluster-admin).
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [clusterrolebindings]
-    verbs: [get, list, update, patch]
+    resourceNames: ["tailscale-operator"]
+    verbs: [get, update, patch]
 
   # Delegated permissions — the manager must hold every permission it grants
   # via the tailscale-operator ClusterRole (K8s RBAC escalation prevention).
@@ -71,8 +74,11 @@ rules:
     resources: [endpointslices]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
-    resources: [ingresses, ingresses/status, ingressclasses]
+    resources: [ingresses, ingresses/status]
     verbs: [get, list, watch, update, patch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingressclasses]
+    verbs: [get, list, watch, create, update, patch, delete]
   - apiGroups: [tailscale.com]
     resources: ["*"]
     verbs: [get, list, watch, create, update, patch, delete]
