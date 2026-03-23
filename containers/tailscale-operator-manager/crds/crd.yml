@@ -20,9 +20,6 @@ spec:
         - name: State
           type: string
           jsonPath: .status.reconcile_operator.state
-        - name: Version
-          type: string
-          jsonPath: .status.reconcile_operator.operatorVersion
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -36,27 +33,26 @@ spec:
               type: object
               required:
                 - clientId
-                - operatorImage
                 - organizationSlug
               properties:
                 clientId:
                   type: string
+                  maxLength: 255
                   description: >
                     Tailscale OIDC federated identity client ID.
                     Cabotage mints JWTs signed by its OIDC issuer and
                     writes them to a K8s Secret for the operator to use.
-                operatorImage:
-                  type: string
-                  description: >
-                    Full image reference for the Tailscale operator
-                    (e.g. ghcr.io/tailscale/k8s-operator:v1.94.2).
                 defaultTags:
                   type: string
+                  maxLength: 512
+                  pattern: "^(tag:[a-z0-9-]+(,\\s*tag:[a-z0-9-]+)*)?$"
                   description: >
                     Default ACL tags for operator-created nodes
-                    (e.g. tag:k8s).
+                    (e.g. tag:cabotage).
                 organizationSlug:
                   type: string
+                  maxLength: 63
+                  pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
                   description: >
                     Cabotage organization slug for labeling.
             status:
