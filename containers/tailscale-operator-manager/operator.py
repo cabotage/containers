@@ -45,30 +45,6 @@ def startup_fn(logger, memo, settings, **kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _ensure_resource(read_fn, create_fn, replace_fn, *args, **kwargs):
-    """Generic create-or-update pattern."""
-    resource = kwargs.pop("resource")
-    try:
-        read_fn(*args)
-        replace_fn(*args, resource)
-    except ApiException as exc:
-        if exc.status == 404:
-            # For create, the name is part of the resource body, not a positional arg
-            # create_fn signature varies: (namespace, body) or just (body)
-            create_fn(resource)
-        else:
-            raise
-
-
-def _delete_if_exists(fn, *args, logger=None):
-    try:
-        fn(*args)
-    except ApiException as exc:
-        if exc.status != 404:
-            if logger:
-                logger.warning(f"Failed to delete {args}: {exc}")
-
-
 TAILNET_API = {
     "group": "tailscale.com",
     "version": "v1alpha1",
@@ -92,11 +68,27 @@ def _ensure_tailnet(custom_api, crd_name, secret_name, labels, logger):
         },
     }
     try:
-        custom_api.get_cluster_custom_object(
+        existing = custom_api.get_cluster_custom_object(
             TAILNET_API["group"], TAILNET_API["version"],
             TAILNET_API["plural"], crd_name,
         )
-        logger.info(f"Tailnet {crd_name} already exists")
+        existing_secret = existing.get("spec", {}).get("credentials", {}).get("secretName", "")
+        if existing_secret != secret_name:
+            logger.info(
+                f"Tailnet {crd_name} has secretName={existing_secret!r}, "
+                f"expected {secret_name!r} — recreating"
+            )
+            custom_api.delete_cluster_custom_object(
+                TAILNET_API["group"], TAILNET_API["version"],
+                TAILNET_API["plural"], crd_name,
+            )
+            custom_api.create_cluster_custom_object(
+                TAILNET_API["group"], TAILNET_API["version"],
+                TAILNET_API["plural"], body,
+            )
+            logger.info(f"Recreated Tailnet {crd_name}")
+        else:
+            logger.info(f"Tailnet {crd_name} already exists")
     except ApiException as exc:
         if exc.status == 404:
             custom_api.create_cluster_custom_object(
@@ -119,6 +111,7 @@ def _delete_tailnet(custom_api, crd_name, logger):
     except ApiException as exc:
         if exc.status != 404:
             logger.warning(f"Failed to delete Tailnet {crd_name}: {exc}")
+            raise
 
 
 def _ensure_proxy_group(custom_api, crd_name, labels, default_tags, logger):
@@ -200,6 +193,7 @@ def _delete_proxy_group(custom_api, crd_name, logger):
     except ApiException as exc:
         if exc.status != 404:
             logger.warning(f"Failed to delete ProxyGroup {pg_name}: {exc}")
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -212,16 +206,15 @@ def _delete_proxy_group(custom_api, crd_name, logger):
 def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     if not spec and retry < 5:
         raise kopf.TemporaryError("spec is not yet populated", delay=1)
+    if not spec:
+        raise kopf.PermanentError("spec is empty after 5 retries, giving up")
 
-    client_id = spec["clientId"]
-    operator_image = spec["operatorImage"]
+    default_tags = spec.get("defaultTags", "")
     default_tags = spec.get("defaultTags", "")
     org_slug = spec["organizationSlug"]
 
     labels = _labels(org_slug)
     tailnet_secret_name = f"tailscale-tailnet-{name}"
-    # The single operator runs in the cabotage namespace
-    operator_namespace = "tailscale"
 
     custom_api = kubernetes.client.CustomObjectsApi()
 
@@ -229,13 +222,10 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     #    (cabotage-app creates the Secret before enqueuing the CRD)
     _ensure_tailnet(custom_api, name, tailnet_secret_name, labels, logger)
 
-    # 3. ProxyGroup (cluster-scoped) — references the Tailnet
+    # 2. ProxyGroup (cluster-scoped) — references the Tailnet
     _ensure_proxy_group(custom_api, name, labels, default_tags, logger)
 
-    # Extract version from operator image tag
-    version = operator_image.rsplit(":", 1)[-1] if ":" in operator_image else "unknown"
-
-    return {"state": "deployed", "operatorVersion": version}
+    return {"state": "deployed"}
 
 
 @kopf.on.delete("cabotagetailscaleoperatorconfigs")
