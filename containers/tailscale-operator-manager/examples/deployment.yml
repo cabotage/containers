@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: cabotage
+  name: tailscale-operator-manager
+  labels:
+    app: tailscale-operator-manager
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tailscale-operator-manager
+  template:
+    metadata:
+      labels:
+        app: tailscale-operator-manager
+        ca-admission.cabotage.io: "true"
+    spec:
+      serviceAccountName: cabotage-tailscale-operator-manager-account
+      containers:
+        - name: tailscale-operator-manager
+          image: ghcr.io/cabotage/containers/tailscale-operator-manager:latest
+          imagePullPolicy: Always
+          args:
+            - "--verbose"
+            - "--liveness"
+            - "http://0.0.0.0:8080/healthz"
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            limits:
+              memory: "256Mi"
+              cpu: "100m"
+            requests:
+              memory: "100Mi"
+              cpu: "50m"
+          securityContext:
+            readOnlyRootFilesystem: true

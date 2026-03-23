@@ -1,0 +1,64 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: cabotagetailscaleoperatorconfigs.cabotage.io
+spec:
+  scope: Namespaced
+  group: cabotage.io
+  names:
+    kind: CabotageTailscaleOperatorConfig
+    plural: cabotagetailscaleoperatorconfigs
+    singular: cabotagetailscaleoperatorconfig
+    shortNames:
+      - tsconfig
+      - tsconfigs
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: State
+          type: string
+          jsonPath: .status.reconcile_operator.state
+        - name: Version
+          type: string
+          jsonPath: .status.reconcile_operator.operatorVersion
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - clientId
+                - operatorImage
+                - organizationSlug
+              properties:
+                clientId:
+                  type: string
+                  description: >
+                    Tailscale OIDC federated identity client ID.
+                    Cabotage mints JWTs signed by its OIDC issuer and
+                    writes them to a K8s Secret for the operator to use.
+                operatorImage:
+                  type: string
+                  description: >
+                    Full image reference for the Tailscale operator
+                    (e.g. ghcr.io/tailscale/k8s-operator:v1.94.2).
+                defaultTags:
+                  type: string
+                  description: >
+                    Default ACL tags for operator-created nodes
+                    (e.g. tag:k8s).
+                organizationSlug:
+                  type: string
+                  description: >
+                    Cabotage organization slug for labeling.
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
