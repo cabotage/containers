@@ -37,10 +37,10 @@ rules:
   # Manage K8s resources in org namespaces for the Tailscale operator.
   - apiGroups: [""]
     resources: [secrets, serviceaccounts]
-    verbs: [get, list, watch, create, update, patch, delete]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
   - apiGroups: [apps]
     resources: [deployments]
-    verbs: [get, list, watch, create, update, patch, delete]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]
     verbs: [get, list, watch, create, update, patch, delete, deletecollection]

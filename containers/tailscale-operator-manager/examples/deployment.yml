@@ -19,17 +19,6 @@ spec:
         ca-admission.cabotage.io: "true"
     spec:
       serviceAccountName: cabotage-tailscale-operator-manager-account
-      initContainers:
-        - name: cabotage-sidecar
-          image: cabotage/sidecar:4.1
-          restartPolicy: Always
-          args:
-            - "kube-login-and-maintain"
-            - "--vault-ca-file=/var/run/secrets/cabotage.io/ca.crt"
-            - "--vault-auth-kubernetes-role=cabotage-tailscale-operator-manager"
-          volumeMounts:
-            - name: vault-token
-              mountPath: /var/run/secrets/vault
       containers:
         - name: tailscale-operator-manager
           image: ghcr.io/cabotage/containers/tailscale-operator-manager:latest
@@ -42,9 +31,6 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
-          volumeMounts:
-            - name: vault-token
-              mountPath: /var/run/secrets/vault
           resources:
             limits:
               memory: "256Mi"
@@ -54,8 +40,3 @@ spec:
               cpu: "50m"
           securityContext:
             readOnlyRootFilesystem: true
-      volumes:
-        - name: vault-token
-          emptyDir:
-            medium: "Memory"
-            sizeLimit: "1M"
