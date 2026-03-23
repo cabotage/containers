@@ -35,20 +35,21 @@ spec:
             spec:
               type: object
               required:
-                - vaultPath
+                - clientId
                 - operatorImage
                 - organizationSlug
               properties:
-                vaultPath:
+                clientId:
                   type: string
                   description: >
-                    Vault path where the Tailscale OAuth credentials
-                    (client_id + client_secret) are stored.
+                    Tailscale OIDC federated identity client ID.
+                    Cabotage mints JWTs signed by its OIDC issuer and
+                    writes them to a K8s Secret for the operator to use.
                 operatorImage:
                   type: string
                   description: >
                     Full image reference for the Tailscale operator
-                    (e.g. ghcr.io/tailscale/k8s-operator:v1.80.3).
+                    (e.g. ghcr.io/tailscale/k8s-operator:v1.94.2).
                 defaultTags:
                   type: string
                   description: >

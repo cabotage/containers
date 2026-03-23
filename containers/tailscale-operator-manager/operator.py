@@ -1,12 +1,9 @@
 import random
 
-import hvac
 import kopf
 import kubernetes
 from kubernetes.client.rest import ApiException
 
-
-VAULT_TOKEN_PATH = "/var/run/secrets/vault/vault-token"
 
 LABEL_KEY = "cabotage.io/tailscale-operator"
 LABEL_VALUE = "true"
@@ -17,10 +14,6 @@ CLUSTER_ROLE_BINDING_NAME = "tailscale-operator"
 
 def _operator_name(crd_name):
     return f"tailscale-operator-{crd_name}"
-
-
-def _oauth_secret_name(crd_name):
-    return f"tailscale-oauth-{crd_name}"
 
 
 def _proxy_group_name(crd_name):
@@ -51,30 +44,6 @@ def startup_fn(logger, memo, settings, **kwargs):
     settings.peering.priority = random.randint(0, 32767)
     settings.peering.name = "tailscale-operator-manager"
     settings.peering.clusterwide = True
-
-    with open(VAULT_TOKEN_PATH, "r") as f:
-        vault_token = f.read()
-
-    memo.vault_api = hvac.Client(
-        url="https://vault.cabotage.svc.cluster.local",
-        verify="/var/run/secrets/cabotage.io/ca.crt",
-        token=vault_token,
-    )
-
-
-def _refresh_vault_token(memo, logger):
-    with open(VAULT_TOKEN_PATH, "r") as f:
-        vault_token = f.read()
-    if memo.vault_api.token != vault_token:
-        logger.info("Vault token changed on disk, updating client")
-        memo.vault_api.token = vault_token
-
-
-@kopf.on.probe(id="vault")
-def check_vault_access(memo, logger, **kwargs):
-    _refresh_vault_token(memo, logger)
-    memo.vault_api.sys.read_leader_status()
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -402,44 +371,35 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     if not spec and retry < 5:
         raise kopf.TemporaryError("spec is not yet populated", delay=1)
 
-    _refresh_vault_token(memo, logger)
-
-    vault_path = spec["vaultPath"]
+    client_id = spec["clientId"]
     operator_image = spec["operatorImage"]
     default_tags = spec.get("defaultTags", "")
     org_slug = spec["organizationSlug"]
 
-    # Read credentials from Vault
-    creds = memo.vault_api.read(vault_path)
-    if creds is None or "data" not in creds:
-        raise kopf.TemporaryError(
-            f"No credentials found at Vault path {vault_path}",
-            delay=30,
-        )
-    client_id = creds["data"]["client_id"]
-    client_secret = creds["data"]["client_secret"]
-
     labels = _labels(org_slug)
     operator_sa = _operator_name(name)
-    secret_name = _oauth_secret_name(name)
+    jwt_secret_name = f"tailscale-oidc-jwt-{name}"
 
     core_api = kubernetes.client.CoreV1Api()
     apps_api = kubernetes.client.AppsV1Api()
     rbac_api = kubernetes.client.RbacAuthorizationV1Api()
     custom_api = kubernetes.client.CustomObjectsApi()
 
-    # 1. OAuth Secret
-    _ensure_secret(
-        core_api,
-        namespace,
-        secret_name,
-        {
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        labels,
-    )
-    logger.info(f"Ensured OAuth Secret {secret_name}")
+    # 1. Ensure JWT Secret exists (cabotage's refresh task writes the token)
+    try:
+        core_api.read_namespaced_secret(jwt_secret_name, namespace)
+        logger.info(f"JWT Secret {jwt_secret_name} exists")
+    except ApiException as exc:
+        if exc.status == 404:
+            # Create placeholder — cabotage's periodic task will populate it
+            _ensure_secret(
+                core_api, namespace, jwt_secret_name,
+                {"token": ""},
+                labels,
+            )
+            logger.info(f"Created placeholder JWT Secret {jwt_secret_name}")
+        else:
+            raise
 
     # 2. ServiceAccounts
     _ensure_service_account(core_api, namespace, operator_sa, labels)
@@ -461,7 +421,7 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     # 5. ClusterRoleBinding subject
     _ensure_cluster_role_binding_subject(rbac_api, namespace, operator_sa, logger)
 
-    # 6. Operator Deployment
+    # 6. Operator Deployment (WIF mode — JWT from cabotage OIDC issuer)
     deploy_name = operator_sa
     env_vars = [
         kubernetes.client.V1EnvVar(
@@ -471,10 +431,8 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
         kubernetes.client.V1EnvVar(
             name="OPERATOR_SECRET", value=f"{deploy_name}-state"
         ),
-        kubernetes.client.V1EnvVar(name="CLIENT_ID_FILE", value="/oauth/client_id"),
-        kubernetes.client.V1EnvVar(
-            name="CLIENT_SECRET_FILE", value="/oauth/client_secret"
-        ),
+        # CLIENT_ID (not CLIENT_ID_FILE) triggers WIF mode in the operator
+        kubernetes.client.V1EnvVar(name="CLIENT_ID", value=client_id),
     ]
     if default_tags:
         env_vars.append(
@@ -504,8 +462,8 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
                             env=env_vars,
                             volume_mounts=[
                                 kubernetes.client.V1VolumeMount(
-                                    name="oauth",
-                                    mount_path="/oauth",
+                                    name="oidc-jwt",
+                                    mount_path="/var/run/secrets/tailscale/serviceaccount",
                                     read_only=True,
                                 ),
                             ],
@@ -517,9 +475,9 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
                     ],
                     volumes=[
                         kubernetes.client.V1Volume(
-                            name="oauth",
+                            name="oidc-jwt",
                             secret=kubernetes.client.V1SecretVolumeSource(
-                                secret_name=secret_name,
+                                secret_name=jwt_secret_name,
                             ),
                         ),
                     ],
@@ -550,7 +508,7 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
 def delete_operator(spec, name, namespace, logger, **kwargs):
     org_slug = spec.get("organizationSlug", "")
     operator_sa = _operator_name(name)
-    secret_name = _oauth_secret_name(name)
+    jwt_secret_name = f"tailscale-oidc-jwt-{name}"
 
     core_api = kubernetes.client.CoreV1Api()
     apps_api = kubernetes.client.AppsV1Api()
@@ -584,7 +542,7 @@ def delete_operator(spec, name, namespace, logger, **kwargs):
         core_api.delete_namespaced_service_account, "proxies", namespace, logger=logger
     )
     _delete_if_exists(
-        core_api.delete_namespaced_secret, secret_name, namespace, logger=logger
+        core_api.delete_namespaced_secret, jwt_secret_name, namespace, logger=logger
     )
     _delete_if_exists(
         core_api.delete_namespaced_secret,
