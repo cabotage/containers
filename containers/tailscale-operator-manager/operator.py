@@ -60,91 +60,6 @@ def _ensure_resource(read_fn, create_fn, replace_fn, *args, **kwargs):
             raise
 
 
-def _ensure_secret(core_api, namespace, name, string_data, labels):
-    secret = kubernetes.client.V1Secret(
-        metadata=kubernetes.client.V1ObjectMeta(
-            name=name,
-            namespace=namespace,
-            labels=labels,
-        ),
-        string_data=string_data,
-    )
-    try:
-        core_api.read_namespaced_secret(name, namespace)
-        core_api.replace_namespaced_secret(name, namespace, secret)
-    except ApiException as exc:
-        if exc.status == 404:
-            core_api.create_namespaced_secret(namespace, secret)
-        else:
-            raise
-
-
-def _ensure_service_account(core_api, namespace, name, labels):
-    sa = kubernetes.client.V1ServiceAccount(
-        metadata=kubernetes.client.V1ObjectMeta(
-            name=name,
-            namespace=namespace,
-            labels=labels,
-        ),
-    )
-    try:
-        core_api.read_namespaced_service_account(name, namespace)
-    except ApiException as exc:
-        if exc.status == 404:
-            core_api.create_namespaced_service_account(namespace, sa)
-        else:
-            raise
-
-
-def _ensure_role(rbac_api, namespace, name, rules, labels):
-    role = kubernetes.client.V1Role(
-        metadata=kubernetes.client.V1ObjectMeta(
-            name=name,
-            namespace=namespace,
-            labels=labels,
-        ),
-        rules=rules,
-    )
-    try:
-        rbac_api.read_namespaced_role(name, namespace)
-        rbac_api.replace_namespaced_role(name, namespace, role)
-    except ApiException as exc:
-        if exc.status == 404:
-            rbac_api.create_namespaced_role(namespace, role)
-        else:
-            raise
-
-
-def _ensure_role_binding(rbac_api, namespace, name, role_name, sa_name, labels):
-    binding = kubernetes.client.V1RoleBinding(
-        metadata=kubernetes.client.V1ObjectMeta(
-            name=name,
-            namespace=namespace,
-            labels=labels,
-        ),
-        role_ref=kubernetes.client.V1RoleRef(
-            api_group="rbac.authorization.k8s.io",
-            kind="Role",
-            name=role_name,
-        ),
-        subjects=[
-            kubernetes.client.RbacV1Subject(
-                kind="ServiceAccount",
-                name=sa_name,
-                namespace=namespace,
-            ),
-        ],
-    )
-    try:
-        rbac_api.read_namespaced_role_binding(name, namespace)
-        rbac_api.replace_namespaced_role_binding(name, namespace, binding)
-    except ApiException as exc:
-        if exc.status == 404:
-            rbac_api.create_namespaced_role_binding(namespace, binding)
-        else:
-            raise
-
-
 def _delete_if_exists(fn, *args, logger=None):
     try:
         fn(*args)
@@ -288,26 +203,6 @@ def _delete_proxy_group(custom_api, crd_name, logger):
 
 
 # ---------------------------------------------------------------------------
-# RBAC rules for proxy pods (namespace-scoped)
-# ---------------------------------------------------------------------------
-
-
-def _proxies_role_rules():
-    return [
-        kubernetes.client.V1PolicyRule(
-            api_groups=[""],
-            resources=["secrets"],
-            verbs=["get", "update", "patch", "create"],
-        ),
-        kubernetes.client.V1PolicyRule(
-            api_groups=[""],
-            resources=["events"],
-            verbs=["get", "create", "patch"],
-        ),
-    ]
-
-
-# ---------------------------------------------------------------------------
 # Reconciliation handlers
 # ---------------------------------------------------------------------------
 
@@ -328,37 +223,14 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
     # The single operator runs in the cabotage namespace
     operator_namespace = "tailscale"
 
-    core_api = kubernetes.client.CoreV1Api()
-    rbac_api = kubernetes.client.RbacAuthorizationV1Api()
     custom_api = kubernetes.client.CustomObjectsApi()
 
-    # 1. Ensure Tailnet credential Secret exists in operator namespace
-    #    (cabotage's refresh task writes client_id + jwt)
-    try:
-        core_api.read_namespaced_secret(tailnet_secret_name, operator_namespace)
-        logger.info(f"Tailnet Secret {tailnet_secret_name} exists")
-    except ApiException as exc:
-        if exc.status == 404:
-            _ensure_secret(
-                core_api, operator_namespace, tailnet_secret_name,
-                {"client_id": client_id, "jwt": ""},
-                labels,
-            )
-            logger.info(f"Created placeholder Tailnet Secret {tailnet_secret_name}")
-        else:
-            raise
-
-    # 2. Tailnet CRD (cluster-scoped) — references the credential Secret
+    # 1. Tailnet CRD (cluster-scoped) — references the credential Secret
+    #    (cabotage-app creates the Secret before enqueuing the CRD)
     _ensure_tailnet(custom_api, name, tailnet_secret_name, labels, logger)
 
     # 3. ProxyGroup (cluster-scoped) — references the Tailnet
     _ensure_proxy_group(custom_api, name, labels, default_tags, logger)
-
-    # 4. Proxies SA + RBAC in org namespace (for proxy pods)
-    _ensure_service_account(core_api, namespace, "proxies", labels)
-    _ensure_role(rbac_api, namespace, "proxies", _proxies_role_rules(), labels)
-    _ensure_role_binding(rbac_api, namespace, "proxies", "proxies", "proxies", labels)
-    logger.info("Ensured proxies RBAC")
 
     # Extract version from operator image tag
     version = operator_image.rsplit(":", 1)[-1] if ":" in operator_image else "unknown"
@@ -368,28 +240,10 @@ def reconcile_operator(spec, name, namespace, memo, logger, retry, **kwargs):
 
 @kopf.on.delete("cabotagetailscaleoperatorconfigs")
 def delete_operator(spec, name, namespace, logger, **kwargs):
-    tailnet_secret_name = f"tailscale-tailnet-{name}"
-    operator_namespace = "tailscale"
-
-    core_api = kubernetes.client.CoreV1Api()
-    rbac_api = kubernetes.client.RbacAuthorizationV1Api()
     custom_api = kubernetes.client.CustomObjectsApi()
 
     # Delete in reverse order
-    _delete_if_exists(
-        rbac_api.delete_namespaced_role_binding, "proxies", namespace, logger=logger
-    )
-    _delete_if_exists(
-        rbac_api.delete_namespaced_role, "proxies", namespace, logger=logger
-    )
-    _delete_if_exists(
-        core_api.delete_namespaced_service_account, "proxies", namespace, logger=logger
-    )
     _delete_proxy_group(custom_api, name, logger)
     _delete_tailnet(custom_api, name, logger)
-    _delete_if_exists(
-        core_api.delete_namespaced_secret,
-        tailnet_secret_name, operator_namespace, logger=logger,
-    )
 
     logger.info(f"Cleaned up Tailscale resources for {name}")
