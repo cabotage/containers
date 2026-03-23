@@ -225,13 +225,34 @@ def _ensure_proxy_group(custom_api, crd_name, labels, default_tags, logger):
         "spec": spec,
     }
     try:
-        custom_api.get_cluster_custom_object(
+        existing = custom_api.get_cluster_custom_object(
             PROXY_GROUP_API["group"],
             PROXY_GROUP_API["version"],
             PROXY_GROUP_API["plural"],
             pg_name,
         )
-        logger.info(f"ProxyGroup {pg_name} already exists")
+        # spec.tailnet is immutable — if missing or wrong, delete and recreate
+        existing_tailnet = existing.get("spec", {}).get("tailnet", "")
+        if existing_tailnet != crd_name:
+            logger.info(
+                f"ProxyGroup {pg_name} has tailnet={existing_tailnet!r}, "
+                f"expected {crd_name!r} — recreating"
+            )
+            custom_api.delete_cluster_custom_object(
+                PROXY_GROUP_API["group"],
+                PROXY_GROUP_API["version"],
+                PROXY_GROUP_API["plural"],
+                pg_name,
+            )
+            custom_api.create_cluster_custom_object(
+                PROXY_GROUP_API["group"],
+                PROXY_GROUP_API["version"],
+                PROXY_GROUP_API["plural"],
+                body,
+            )
+            logger.info(f"Recreated ProxyGroup {pg_name} with tailnet={crd_name}")
+        else:
+            logger.info(f"ProxyGroup {pg_name} already exists")
     except ApiException as exc:
         if exc.status == 404:
             custom_api.create_cluster_custom_object(
