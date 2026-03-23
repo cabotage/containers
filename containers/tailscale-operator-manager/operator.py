@@ -279,12 +279,12 @@ def _operator_role_rules():
         kubernetes.client.V1PolicyRule(
             api_groups=[""],
             resources=["secrets", "serviceaccounts", "configmaps", "events"],
-            verbs=["get", "list", "watch", "create", "update", "patch", "delete"],
+            verbs=["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"],
         ),
         kubernetes.client.V1PolicyRule(
             api_groups=[""],
             resources=["services", "services/status"],
-            verbs=["get", "list", "watch", "update", "patch"],
+            verbs=["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"],
         ),
         kubernetes.client.V1PolicyRule(
             api_groups=[""],
@@ -294,7 +294,7 @@ def _operator_role_rules():
         kubernetes.client.V1PolicyRule(
             api_groups=["apps"],
             resources=["statefulsets", "deployments"],
-            verbs=["get", "list", "watch", "create", "update", "patch", "delete"],
+            verbs=["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"],
         ),
         kubernetes.client.V1PolicyRule(
             api_groups=["networking.k8s.io"],

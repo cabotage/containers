@@ -20,25 +20,19 @@ spec:
     spec:
       serviceAccountName: cabotage-tailscale-operator-manager-account
       initContainers:
-        - name: cabotage-enroller
-          image: cabotage/sidecar:4
+        - name: cabotage-sidecar
+          image: cabotage/sidecar:4.1
+          restartPolicy: Always
           args:
-            - "kube-login"
+            - "kube-login-and-maintain"
             - "--vault-ca-file=/var/run/secrets/cabotage.io/ca.crt"
             - "--vault-auth-kubernetes-role=cabotage-tailscale-operator-manager"
           volumeMounts:
             - name: vault-token
               mountPath: /var/run/secrets/vault
       containers:
-        - name: cabotage-sidecar
-          image: cabotage/sidecar:4
-          args:
-            - "maintain"
-          volumeMounts:
-            - name: vault-token
-              mountPath: /var/run/secrets/vault
         - name: tailscale-operator-manager
-          image: cabotage/tailscale-operator-manager:1
+          image: ghcr.io/cabotage/containers/tailscale-operator-manager:latest
           imagePullPolicy: Always
           args:
             - "--verbose"
