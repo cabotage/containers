@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -11,6 +13,19 @@ use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn install_shutdown_handler() -> Arc<AtomicBool> {
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let s = shutdown.clone();
+    ctrlc::set_handler(move || {
+        eprintln!("Received shutdown signal, shutting down gracefully...");
+        s.store(true, Ordering::SeqCst);
+    })
+    .expect("Error setting signal handler");
+    shutdown
+}
+
 // --- Vault API helpers ---
 
 fn vault_client(vault_ca_file: &str) -> Result<Client> {
@@ -19,6 +34,7 @@ fn vault_client(vault_ca_file: &str) -> Result<Client> {
     let ca_cert = reqwest::Certificate::from_pem(&ca_pem)?;
     Ok(Client::builder()
         .add_root_certificate(ca_cert)
+        .timeout(REQUEST_TIMEOUT)
         .build()?)
 }
 
@@ -524,6 +540,7 @@ fn do_maintain_loop(
     cert_dir: &str,
     vault_pki_backend: &str,
     vault_pki_role: Option<&str>,
+    shutdown: &AtomicBool,
 ) -> Result<()> {
     let _ = vault_pki_role; // used via vault_pki_backend prefix matching
     let vault_token_info = token_lookup_self(client, vault_addr, vault_token)?;
@@ -534,7 +551,7 @@ fn do_maintain_loop(
         .unwrap_or_default();
     eprintln!("Using token with accessor {accessor} and policies {}", policies.join(", "));
 
-    loop {
+    while !shutdown.load(Ordering::SeqCst) {
         let min_sleep: i64 = 60;
         let max_sleep: i64 = 1800;
         let vault_token_info = token_lookup_self(client, vault_addr, vault_token)?;
@@ -638,8 +655,18 @@ fn do_maintain_loop(
         }
 
         eprintln!("sleeping {sleep_secs} seconds...");
-        thread::sleep(Duration::from_secs(sleep_secs.max(1) as u64));
+        // Sleep in 1-second increments so we can check the shutdown flag promptly.
+        let total = sleep_secs.max(1) as u64;
+        for _ in 0..total {
+            if shutdown.load(Ordering::SeqCst) {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
     }
+
+    eprintln!("Shutdown complete.");
+    Ok(())
 }
 
 // --- CLI ---
@@ -788,6 +815,7 @@ struct KubeLoginAndMaintainArgs {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let shutdown = install_shutdown_handler();
 
     match cli.command {
         Commands::KubeLogin(args) => {
@@ -853,6 +881,7 @@ fn main() -> Result<()> {
                 &args.cert_dir,
                 &args.vault_pki_backend,
                 args.vault_pki_role.as_deref(),
+                &shutdown,
             )?;
         }
         Commands::KubeLoginAndMaintain(args) => {
@@ -895,6 +924,7 @@ fn main() -> Result<()> {
                 &args.cert_dir,
                 &args.vault_pki_backend,
                 args.vault_pki_role.as_deref(),
+                &shutdown,
             )?;
         }
     }
