@@ -364,6 +364,14 @@ def vault_fetch_consul_token(
     write_consul_token(consul_secrets_path, consul_token_response.json())
 
 
+def _clear_leases_dir(leases_dir):
+    for entry in os.listdir(leases_dir):
+        path = os.path.join(leases_dir, entry)
+        if os.path.isfile(path):
+            click.echo(f"Removing old lease file: {entry}")
+            os.remove(path)
+
+
 # --- Shared logic for CLI commands ---
 
 
@@ -419,7 +427,12 @@ def do_kube_login(
             "                        unwrapped token must be accessible during bootstrap"
         )
 
-    os.makedirs(os.path.join(vault_secrets_path, "leases"), exist_ok=True)
+    for lease_dir in set(
+        os.path.join(x, "leases")
+        for x in [vault_secrets_path, consul_secrets_path, cert_dir]
+    ):
+        os.makedirs(lease_dir, exist_ok=True)
+        _clear_leases_dir(lease_dir)
     with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r") as token_file:
         jwt = token_file.read()
 
@@ -452,7 +465,6 @@ def do_kube_login(
             vault_token_file.write(token_contents)
 
     if fetch_consul_token:
-        os.makedirs(os.path.join(consul_secrets_path, "leases"), exist_ok=True)
         vault_fetch_consul_token(
             vault_addr,
             token_contents,
@@ -462,7 +474,6 @@ def do_kube_login(
             consul_secrets_path,
         )
     if fetch_cert:
-        os.makedirs(os.path.join(cert_dir, "leases"), exist_ok=True)
         vault_fetch_certificate(
             vault_addr,
             token_contents,
