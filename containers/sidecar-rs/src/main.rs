@@ -397,6 +397,16 @@ fn vault_fetch_consul_token(
     Ok(())
 }
 
+fn clear_leases_dir(leases_dir: &Path) -> Result<()> {
+    for entry in fs::read_dir(leases_dir)?.flatten() {
+        if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            eprintln!("Removing old lease file: {}", entry.file_name().to_string_lossy());
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 // --- Shared command logic ---
 
 #[allow(clippy::too_many_arguments)]
@@ -446,7 +456,14 @@ fn do_kube_login(
     }
 
     let vault_secrets = Path::new(vault_secrets_path);
-    fs::create_dir_all(vault_secrets.join("leases"))?;
+    let lease_dirs: HashSet<PathBuf> = [vault_secrets_path, consul_secrets_path, cert_dir]
+        .iter()
+        .map(|p| Path::new(p).join("leases"))
+        .collect();
+    for lease_dir in &lease_dirs {
+        fs::create_dir_all(lease_dir)?;
+        clear_leases_dir(lease_dir)?;
+    }
 
     let jwt = fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/token")
         .context("reading kubernetes service account token")?;
@@ -492,7 +509,6 @@ fn do_kube_login(
 
     if fetch_consul_token {
         let consul_path = Path::new(consul_secrets_path);
-        fs::create_dir_all(consul_path.join("leases"))?;
         vault_fetch_consul_token(
             client,
             vault_addr,
@@ -505,7 +521,6 @@ fn do_kube_login(
 
     if fetch_cert {
         let cert_path = Path::new(cert_dir);
-        fs::create_dir_all(cert_path.join("leases"))?;
         vault_fetch_certificate(
             client,
             vault_addr,
