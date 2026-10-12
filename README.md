@@ -37,6 +37,10 @@ A mutating admission webhook that injects the `cabotage-ca` ConfigMap as a proje
 
 A Docker registry (based on `registry:2.8.3`) with a custom entrypoint that installs the Cabotage CA certificate into the system trust store.
 
+### metrics-tenant-router
+
+A Prometheus remote_write proxy between Alloy and Mimir that routes each series to the owning organization's Mimir tenant (`X-Scope-OrgID`) after validating its namespace/service hint against Cabotage's tenant registry; unverifiable series stay in `cabotage-infra`. Written in Go to reuse Prometheus's own `prompb` types.
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
